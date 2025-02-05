@@ -5,34 +5,65 @@
 ;be in memory after it is been loaded
 [ORG 0x7C00]
 
-start:
+stage1:
     cli ; clear interrupts
 	xor	AX, AX			;Set segment registers to zero
 	mov	ES, AX
 	mov	DS, AX
 	mov	SS, AX
-	mov	SP, start		;Top of stack
+	mov	SP, stage1		;Top of stack
 	mov	DI, SP			;  is bottom of relocation point
 
-    ; set video mode
-    ; assuming AH = 0
+    ; set video mode, assuming AH = 0
     mov AL, 0x12 ;  (16-color 640x480)
     int 0x10
-    ; set cursor position
+
+    ; set the cursor position
     mov AH, 0x02
     mov BH , 0x00
-    mov DH, 0
-    mov DL, 0
+    mov dx, 0
     int 0x10
 
 main:
     mov SI, str_hello ; SI points to the beginning of the string
+    mov BL, 0x03      ; text color
     call    print_string
 
-exit:
-    JMP $ 		;infinite loop
+    mov	si, 3			; for i < 3, do:
+load_stage2:
+    ; read next block from a boot disk into the memory
+    mov ax, 0x0201; read one sector command
+    mov cx, 0x02 ; read SECOND block from disk, the first one is THIS one
+    mov dx, 0x00 ; DL points to a floppy0 aka disk A:
 
-;Assume that ASCII value is in register AL
+    mov bx, stage2 ; stage1+512 must be equal to stage2 addr
+    int 0x13;
+
+	jnc	read_ok			;Success
+	dec	si			;retry count
+	jnz	load_stage2
+
+load_err:
+    ; handle error and hang forever
+    mov si, str_err
+    mov BL, 0x04 ; error color
+    call print_string
+    jmp $;
+
+read_ok:
+    ; check the stage2 signature
+    cmp word[stage2+510], 0xDEAD
+    jne load_err
+
+verify_ok:
+    mov si, str_stage2_found
+    mov BL, 0x07
+    call print_string
+    jmp stage2
+
+
+; Assume that ASCII value is in register AL
+; assume text color options is register BL
 print_chr:
     mov AH, 0x0E ; bios procedure number
     mov BH, 0x00 ; page number
@@ -46,14 +77,14 @@ print_chr:
         ; Bit 2 = Red (foreground)
         ; Bit 1 = Green (foreground)
         ; Bit 0 = Blue (foreground)
-    mov BL, 0x4C; text attributes
+;    mov BL, 0x4C; text attributes
     int 0x10  ; call bios procedure
     ret
 
 ; assume string pointer in SI
 print_string:
     mov AL, [SI] ; chr = str[si]
-    or AL, al ; null-termintor? chr == 0 ?
+    or AL, AL ; null-termintor? chr == 0 ?
     jz return
 
     call print_chr
@@ -61,26 +92,31 @@ print_string:
     inc SI  ; i++
     jmp print_string
 
-
-print_ascii:
-    ; A, start of the ascii table
-    mov AL, 33
-print_ascii_loop:
-    call print_chr
-
-    inc AL  ; next char
-    cmp AL, 127 ; end of ascii table
-    je return
-
-    jmp print_ascii_loop
-
 return:
     ret
 
+; stage1 data,
+; note that printing \r \n (10, 13) via bios procedures
+; corretly move the cursor on a next line, so you don;t have to advance
+; the cursor position by hand, which is nice.
+str_hello db 'stage1 bootloader started', 10, 13 , 0
+str_err db 'Error loading stage2', 10, 13, 0
+str_stage2_found db 'stage2 bootloader found, passing control', 10, 13, 0
 
+times 510 - ($ - $$) db 0	;fill the rest of sector with 0
+dw 0xAA55			; add boot signature at the end of bootloader
+; --- MBR end ---
 
-; data
-str_hello db 'Hello, bootloader!', 0
+; stage2 starts here: the idea is to put stage2 bootloader right after the MBR,
+; load it via bios procedure, and pass control to a newly loaded block.
+stage2:
+    mov SI, str_stage2
+    mov BL, 0x02
+    call print_string
+    jmp $ ; hang forever
 
-TIMES 510 - ($ - $$) db 0	;fill the rest of sector with 0
-DW 0xAA55			; add boot signature at the end of bootloader
+; stage2 data
+str_stage2 db 'stage2 bootloader started', 10, 13, 0
+
+times 510 - ($ - stage2) db 0 ;; padding
+dw 0xDEAD
