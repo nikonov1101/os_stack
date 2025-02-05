@@ -20,14 +20,18 @@ stage1:
 
     ; set the cursor position
     mov AH, 0x02
-    mov BH , 0x00
-    mov dx, 0
+    mov BH, 0x00
+    mov DX, 0x00
     int 0x10
 
 main:
     mov SI, str_hello ; SI points to the beginning of the string
     mov BL, 0x03      ; text color
     call    print_string
+
+    mov al, 0x42
+    call byte_to_char
+    jmp $
 
     mov	si, 3			; for i < 3, do:
 load_stage2:
@@ -95,6 +99,34 @@ print_string:
 return:
     ret
 
+; assume input byte in AL
+; MOD AX, BX
+byte_to_char:
+    push ax
+    mov bx, ax
+
+    ; deal with a first character
+    and bx, 0x00F0 ; leave only hi bytes
+    shr bx, 4       ; move significant bits to the right
+    add bx, tab_hextoc ; now offset in BL, add the base address of the table
+    mov al, byte[bx]   ; reference a byte pointed by BX, load into AL
+    mov bl, 0x07
+    call print_chr ; print a byte from AL
+
+
+    ; deal with the second char
+    pop ax
+    mov bx, ax  ; restore AX, copy into BX for modifications
+    and bx, 0x000f ; remove all but LSB, got offset of the LSB sigit
+    ; the rest is the same as above
+    add bx, tab_hextoc
+    mov al, byte[bx]
+    mov bl, 0x07
+    call print_chr
+
+    ret
+
+
 ; stage1 data,
 ; note that printing \r \n (10, 13) via bios procedures
 ; corretly move the cursor on a next line, so you don;t have to advance
@@ -102,6 +134,7 @@ return:
 str_hello db 'stage1 bootloader started', 10, 13 , 0
 str_err db 'Error loading stage2', 10, 13, 0
 str_stage2_found db 'stage2 bootloader found, passing control', 10, 13, 0
+tab_hextoc db '0123456789ABCDEF'
 
 times 510 - ($ - $$) db 0	;fill the rest of sector with 0
 dw 0xAA55			; add boot signature at the end of bootloader
