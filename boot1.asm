@@ -125,10 +125,11 @@ byte_to_char:
 ; assume word is in AX
 print_word:
    push ax
+   shr ax, 8 ;; shift AH into AL
    call byte_to_char
 
    pop ax
-   shr ax, 8 ;; shift AH into AL
+   and ax, 0x00ff
    call byte_to_char
 
    ret
@@ -156,25 +157,40 @@ stage2:
     mov BL, 0x02
     call print_string
 
+    ; print in advance, src=AX  will be trashed
+    mov SI, str_lowmem
+    call print_string
+
 lowmem_detect:
     ; detect low memory
     clc
     int 0x12 ; request low memory size
     ; AX = amount of continuous memory in KB starting from 0.
-    ; TODO: check error
+    ; The carry flag is set if it failed
+    jc lowmem_err
 
 t_lowmem_handle:  ; just for offset calculation
     call print_word
     mov al, 'k'
     call print_chr
+    jmp forever
 
 
-    jmp $ ; hang forever
+lowmem_err:
+    mov SI, str_errcode
+    call print_string
+    mov al, '1' ; how to define all codes in one place?
+    call print_chr
+    jmp forever
+
+forever:
+    jmp $
 
 
 ; stage2 data
 str_stage2 db 'stage2 bootloader started', 10, 13, 0
 str_errcode db 'error code: ', 0
+str_lowmem db 'low mem: ', 0
 
 times 510 - ($ - stage2) db 0 ;; padding
 dw 0xDEAD

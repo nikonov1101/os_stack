@@ -19,6 +19,6 @@ with open("./symbols.table", "r") as f:
                 sym = parts[symi]
 
                 la = int(offset, 16) + base
-                gdb_cmd = f"break {hex(la)}"
+                gdb_cmd = f"break *{hex(la)}"
 
                 print(f"{offset} :: {sym}\t\t{gdb_cmd}")
