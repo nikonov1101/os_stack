@@ -29,10 +29,6 @@ main:
     mov BL, 0x03      ; text color
     call    print_string
 
-    mov al, 0x42
-    call byte_to_char
-    jmp $
-
     mov	si, 3			; for i < 3, do:
 load_stage2:
     ; read next block from a boot disk into the memory
@@ -126,6 +122,17 @@ byte_to_char:
 
     ret
 
+; assume word is in AX
+print_word:
+   push ax
+   call byte_to_char
+
+   pop ax
+   shr ax, 8 ;; shift AH into AL
+   call byte_to_char
+
+   ret
+
 
 ; stage1 data,
 ; note that printing \r \n (10, 13) via bios procedures
@@ -135,6 +142,8 @@ str_hello db 'stage1 bootloader started', 10, 13 , 0
 str_err db 'Error loading stage2', 10, 13, 0
 str_stage2_found db 'stage2 bootloader found, passing control', 10, 13, 0
 tab_hextoc db '0123456789ABCDEF'
+
+; TODO: where should we place the partition table?
 
 times 510 - ($ - $$) db 0	;fill the rest of sector with 0
 dw 0xAA55			; add boot signature at the end of bootloader
@@ -146,10 +155,26 @@ stage2:
     mov SI, str_stage2
     mov BL, 0x02
     call print_string
+
+lowmem_detect:
+    ; detect low memory
+    clc
+    int 0x12 ; request low memory size
+    ; AX = amount of continuous memory in KB starting from 0.
+    ; TODO: check error
+
+t_lowmem_handle:  ; just for offset calculation
+    call print_word
+    mov al, 'k'
+    call print_chr
+
+
     jmp $ ; hang forever
+
 
 ; stage2 data
 str_stage2 db 'stage2 bootloader started', 10, 13, 0
+str_errcode db 'error code: ', 0
 
 times 510 - ($ - stage2) db 0 ;; padding
 dw 0xDEAD
