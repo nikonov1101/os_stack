@@ -52,10 +52,17 @@ main:
     mov al, 13
     call print_chr
 
-    mov	si, 3			; for i < 3, do:
 load_stage2:
+reset_drive:
+    ; TODO: should I set ah=0x0d if we boot from a hard drive?
+    mov ah, 0x00
+    int 0x13
+
+    mov	si, 3			; for i < 3, do:
+read_stage2:
     ; read next block from a boot disk into the memory
-    mov ax, 0x0201; read one sector command
+    mov ah, 0x02    ; read command
+    mov al, 0x01    ; sector count
     mov cx, 0x02 ; read SECOND block from disk, the first one is THIS one
     ; dx already contains the drive number we've boot from
 
