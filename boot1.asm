@@ -7,12 +7,20 @@
 
 stage1:
     cli ; clear interrupts
+    ; canonicalizing CS:IP
+    ; as of https://www.cs.cmu.edu/~410-s07/p4/p4-boot.pdf
+    ; section 6.1
+    jmp 0x00:_next
+_next:
 	xor	AX, AX			;Set segment registers to zero
 	mov	ES, AX
 	mov	DS, AX
 	mov	SS, AX
 	mov	SP, stage1		;Top of stack
 	mov	DI, SP			;  is bottom of relocation point
+
+    ; save the boot disk pointer in DL
+    push dx
 
     ; set video mode, assuming AH = 0
     mov AL, 0x12 ;  (16-color 640x480)
@@ -29,12 +37,27 @@ main:
     mov BL, 0x03      ; text color
     call    print_string
 
+    ;
+    ; print boot device number
+    ;
+    mov si, str_bootdrive
+    call print_string
+
+    pop dx ; DO NOT MODIFY DX UNTIL STAGE-2
+    mov al, dl
+    call byte_to_char
+
+    mov al, 10
+    call print_chr
+    mov al, 13
+    call print_chr
+
     mov	si, 3			; for i < 3, do:
 load_stage2:
     ; read next block from a boot disk into the memory
     mov ax, 0x0201; read one sector command
     mov cx, 0x02 ; read SECOND block from disk, the first one is THIS one
-    mov dx, 0x00 ; DL points to a floppy0 aka disk A:
+    ; dx already contains the drive number we've boot from
 
     mov bx, stage2 ; stage1+512 must be equal to stage2 addr
     int 0x13;
@@ -140,11 +163,10 @@ print_word:
 ; corretly move the cursor on a next line, so you don;t have to advance
 ; the cursor position by hand, which is nice.
 str_hello db 'stage1 bootloader started', 10, 13 , 0
+str_bootdrive db 'boot drive: ', 0
 str_err db 'Error loading stage2', 10, 13, 0
 str_stage2_found db 'stage2 bootloader found, passing control', 10, 13, 0
 tab_hextoc db '0123456789ABCDEF'
-
-; TODO: where should we place the partition table?
 
 times 510 - ($ - $$) db 0	;fill the rest of sector with 0
 dw 0xAA55			; add boot signature at the end of bootloader
@@ -152,6 +174,7 @@ dw 0xAA55			; add boot signature at the end of bootloader
 
 ; stage2 starts here: the idea is to put stage2 bootloader right after the MBR,
 ; load it via bios procedure, and pass control to a newly loaded block.
+; offset from .ORG is 512 byte to match the size of a disk sector
 stage2:
     mov SI, str_stage2
     mov BL, 0x02

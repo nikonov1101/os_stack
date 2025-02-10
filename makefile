@@ -1,8 +1,8 @@
 default: bootloader
-	qemu-system-i386 -m 256m -boot a -fda boot.img
+	qemu-system-i386 -m 256m -boot c -hda boot.img
 
 gdb: bootloader
-	qemu-system-i386 -s -S -m 256m -boot a -fda boot.img
+	qemu-system-i386 -s -S -m 256m -boot c -hda boot.img
 
 symbols:
 	cat boot1.asm | grep -v '\[ORG' > tmp.asm
