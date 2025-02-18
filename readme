@@ -1,0 +1,72 @@
+from https://www.kernel.org/doc/Documentation/x86/boot.rst
+
+At entry, the CPU must be in 32-bit protected mode with paging
+disabled; a GDT must be loaded with the descriptors for selectors
+__BOOT_CS(0x10) and __BOOT_DS(0x18); both descriptors must be 4G flat
+segment; __BOOT_CS must have execute/read permission, and __BOOT_DS
+must have read/write permission; CS must be __BOOT_CS and DS, ES, SS
+must be __BOOT_DS; interrupt must be disabled; %esi must hold the base
+address of the struct boot_params; %ebp, %edi and %ebx must be zero.
+
+looks like a good start conditions for your own kernel.
+
+UPD: what i does not understant at this point
+how to load (relocate??) the kernel at the __BOOT_CS?
+
+if the desired environemt is as described above, what we have to do is:
+
+1. load kernel into the lowmem:
+    let assume the bootloader knowns how to find a kernel
+    OR as it is done for in linux, let's allocate a "data exchange" page
+    at the beginning of the kernel.
+
+2. ok at this point we know the physical address of the kernel,
+   and probably the entrypoint offset (via the data-exchange page as described above)
+
+3. how we can set-up the GDT having that info?
+   we need 4 segments:
+     1. kernel code
+     2. kernel data + stack
+     3. userspace code
+     4. userspave data + stack
+
+how about loading a kernel right into the highmem?
+
+since 386, we can access 32 bit address from real mode.
+what if we load the kernel right there?
+just waiste of the whole LOWMEM, but who cares, since it's fun enough.
+
+
+---------------------------------------------------------
+
+
+next steps:
+
+* understand the protected mode memory model
+  * segments vs pages?
+  * we can't turn it off, so implement bare minimum:
+    4 pages: 2 for kernel's code and data,
+    and 2 more for userspace.
+  * the above config effectively enforces flat memory model;
+
+  * s2b: set 32 or even 64 bit mode?
+  * s2b: must set up GDT and paging
+  * s2b: load kernel into kernel code segment from above?
+  * jump to kernel's main
+  * kernel: set 32 or even 64 bit mode?
+
+
+* find out where the kernel image is located;
+* load the kernel image into memory (requires basic disk I/O);
+* enable protected mode;
+* preparing the runtime environment for the kernel (e.g. setting up stack space);
+    - store memory maps on a pre-defined location
+* jump to the kernel entrypoint (e.g. kmain() );
+
+---
+
+reading
+
+https://stanislavs.org/helppc/int_table.html
+
+https://www.cs.uaf.edu/2017/fall/cs301/reference/x86_64.html
