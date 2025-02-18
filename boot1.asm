@@ -5,19 +5,19 @@
 ;be in memory after it is been loaded
 [ORG 0x7C00]
 
-stage1:
+_start_stage1:
     cli ; clear interrupts
     ; canonicalizing CS:IP
     ; as of https://www.cs.cmu.edu/~410-s07/p4/p4-boot.pdf
     ; section 6.1
-    jmp 0x00:_next
-_next:
+    jmp 0x00:stage1
+stage1:
 	xor	AX, AX			;Set segment registers to zero
 	mov	ES, AX
 	mov	DS, AX
 	mov	SS, AX
-	mov	SP, stage1		;Top of stack
-	mov	DI, SP			;  is bottom of relocation point
+	mov	SP, _start_stage1 ;Top of stack
+	mov	DI, SP			  ;is bottom of relocation point
 
     ; save the boot disk pointer in DL
     push dx
@@ -32,7 +32,7 @@ _next:
     mov DX, 0x00
     int 0x10
 
-main:
+.main:
     mov SI, str_hello ; SI points to the beginning of the string
     mov BL, 0x03      ; text color
     call    print_string
@@ -47,19 +47,20 @@ main:
     mov al, dl
     call byte_to_char
 
+    ; \r \n
     mov al, 10
     call print_chr
     mov al, 13
     call print_chr
 
-load_stage2:
-reset_drive:
+.load_stage2:
+.reset_drive:
     ; TODO: should I set ah=0x0d if we boot from a hard drive?
     mov ah, 0x00
     int 0x13
 
     mov	si, 3			; for i < 3, do:
-read_stage2:
+.read_stage2:
     ; read next block from a boot disk into the memory
     mov ah, 0x02    ; read command
     mov al, 0x01    ; sector count
@@ -70,23 +71,23 @@ read_stage2:
     ; 	ES:BX = pointer to buffer
     int 0x13;
 
-	jnc	read_ok			;Success
+	jnc	.read_ok			;Success
 	dec	si			;retry count
-	jnz	load_stage2
+	jnz	.load_stage2
 
-load_err:
+.load_err:
     ; handle error and hang forever
     mov si, str_err
     mov BL, 0x04 ; error color
     call print_string
     jmp $;
 
-read_ok:
+.read_ok:
     ; check the stage2 signature
     cmp word[stage2+510], 0xDEAD
-    jne load_err
+    jne .load_err
 
-verify_ok:
+.verify_ok:
     mov si, str_stage2_found
     mov BL, 0x07
     call print_string
@@ -192,20 +193,20 @@ stage2:
     mov SI, str_lowmem
     call print_string
 
-lowmem_detect:
+.lowmem_detect:
     ; detect low memory
     clc
     int 0x12 ; request low memory size
     ; AX = amount of continuous memory in KB starting from 0.
     ; The carry flag is set if it failed
-    jc lowmem_err
+    jc .lowmem_err
 
-t_lowmem_handle:  ; just for offset calculation
+.lowmem_print:
     call print_word
     mov al, 'k'
     call print_chr
 
-t_set_a20:
+.set_a20:
     mov si, str_a20_state
     call print_string
     call get_a20_state
@@ -213,66 +214,9 @@ t_set_a20:
     add ax, '0'
     call print_chr
     pop ax
-
-
-t_load3:
-
-    mov	si, 3			; for i < 3, do:
-read_stage3:
-
-    ; 	ES:BX = pointer to buffer
-    mov ax, 0x8000
-    mov es, ax
-    mov bx, 0x00
-
-    ; read next block from a boot disk into the memory
-    mov ah, 0x02    ; read command
-    mov al, 0x01    ; sector count
-    mov cx, 0x03 ; read THIRD block from disk, the first one is THIS one
-    mov dl, 0x80 ; hard drive
-
-    int 0x13;
-	jnc	read_stage3_end;Success
-	dec	si			;retry count
-	jnz	read_stage3
-    jmp t_333
-
-read_stage3_end:
-    mov ax, 0x8000
-    mov ds, ax
-    cmp word[510], 0xDEAD
-    je t_222
-
-t_111:
-    mov al, 10
-    call print_chr
-    mov al, 13
-    call print_chr
-    mov al, '1'
-    call print_chr
     jmp forever
 
-t_222:
-    mov al, 10
-    call print_chr
-    mov al, 13
-    call print_chr
-    mov al, '2'
-    call print_chr
-    jmp forever
-t_333:
-    mov al, 10
-    call print_chr
-    mov al, 13
-    call print_chr
-    mov al, '3'
-    call print_chr
-    jmp forever
-
-t_loaded:
-    jmp forever
-
-lowmem_err:
+.lowmem_err:
     mov SI, str_errcode
     call print_string
     mov al, '1' ; how to define all codes in one place?
@@ -290,9 +234,9 @@ get_a20_state:
 	push di
 	push ds
 	push es
-	cli
 
 	mov ax, 0x0000					;	0x0000:0x0500(0x00000500) -> ds:si
+    jmp forever
 	mov ds, ax
 	mov si, 0x0500
 
@@ -304,6 +248,7 @@ get_a20_state:
 	mov byte [.BufferBelowMB], al
 	mov al, [es:di]
 	mov byte [.BufferOverMB], al
+.t_saved:
 
 	mov ah, 1						;	check byte [0x00100500] == byte [0x0500]
 	mov byte [ds:si], 0
@@ -318,7 +263,6 @@ get_a20_state:
 	mov al, [.BufferOverMB]
 	mov [es:di], al
 	shr ax, 8
-	sti
 	pop es
 	pop ds
 	pop di
