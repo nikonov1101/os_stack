@@ -1,0 +1,30 @@
+next steps:
+
+* understand the protected mode memory model
+  * segments vs pages?
+  * we can't turn it off, so implement bare minimum:
+    4 pages: 2 for kernel's code and data,
+    and 2 more for userspace.
+  * the above config effectively enforces flat memory model;
+
+  * s2b: set 32 or even 64 bit mode?
+  * s2b: must set up GDT and paging
+  * s2b: load kernel into kernel code segment from above?
+  * jump to kernel's main
+  * kernel: set 32 or even 64 bit mode?
+
+
+* find out where the kernel image is located;
+* load the kernel image into memory (requires basic disk I/O);
+* enable protected mode;
+* preparing the runtime environment for the kernel (e.g. setting up stack space);
+    - store memory maps on a pre-defined location
+* jump to the kernel entrypoint (e.g. kmain() );
+
+---
+
+reading
+
+https://stanislavs.org/helppc/int_table.html
+
+https://www.cs.uaf.edu/2017/fall/cs301/reference/x86_64.html
