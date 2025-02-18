@@ -6,6 +6,7 @@ gdb: bootloader
 
 bootloader:
 	nasm boot1.asm -f bin -o boot.img
+	@python3 ./free.py
 
 symbols:
 	cat boot1.asm | grep -v '\[ORG' > tmp.asm
