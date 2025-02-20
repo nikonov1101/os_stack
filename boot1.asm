@@ -287,9 +287,9 @@ get_a20_state:
 	mov di, 0x0510
 
 	mov al, [ds:si]					;	save old values
-	mov byte [.BufferBelowMB], al
+	mov byte [boot1data.BufferBelowMB], al
 	mov al, [es:di]
-	mov byte [.BufferOverMB], al
+	mov byte [boot1data.BufferOverMB], al
 
 	mov ah, 1						;	check byte [0x00100500] == byte [0x0500]
 	mov byte [ds:si], 0
@@ -299,9 +299,9 @@ get_a20_state:
 	jne .exit
 	dec ah
 .exit:
-	mov al, [.BufferBelowMB]
+	mov al, [boot1data.BufferBelowMB]
 	mov [ds:si], al
-	mov al, [.BufferOverMB]
+	mov al, [boot1data.BufferOverMB]
 	mov [es:di], al
 	shr ax, 8
 	pop es
@@ -311,21 +311,24 @@ get_a20_state:
 	popf
 	ret
 
-.BufferBelowMB:	db 0
-.BufferOverMB	db 0
-
 ; boot1 data
 boot1data:
+.BufferBelowMB:	db 0
+.BufferOverMB	db 0
 .str_hello db 'boot1 started', 10, 13, 0
 .str_errcode db 'error code: ', 0
 .str_lowmem db 'low mem: ', 0
 .str_a20_state db 10,13,'a20: ', 0
-.size_sectors db 1
+.size_sectors db 1 ; TODO: relocate data section on expantion?
 
 times 510 - ($ - boot1) db 0 ;; padding
 .signature dw 0xDEAD
 
-
+; XXX not loaded by boot0 until .size_sectors is adjusted
+; XXX not loaded by boot0 until .size_sectors is adjusted
+; XXX not loaded by boot0 until .size_sectors is adjusted
+; XXX not loaded by boot0 until .size_sectors is adjusted
+; XXX not loaded by boot0 until .size_sectors is adjusted
 ; stage 3.5 test code starts below
 stage3:
     ;;; try to load this into hi mem
