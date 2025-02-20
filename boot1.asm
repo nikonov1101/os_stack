@@ -5,6 +5,11 @@
 ;be in memory after it is been loaded
 [ORG 0x7C00]
 
+; handover table starts at 0x600
+boot_device_p equ 0x600 ; word
+xxx_next_p equ 0x602
+e820_table_p equ 0xC00
+
 _start_boot0:
     cli ; clear interrupts
     ; canonicalizing CS:IP
@@ -44,6 +49,7 @@ boot0:
     call print_string
 
     pop dx ; DO NOT MODIFY DX UNTIL BOOT1
+    mov word [boot_device_p], dx
     mov al, dl
     call byte_to_char
 
@@ -275,13 +281,10 @@ boot1:
 ;       The consequence of overwriting the BIOS code will lead to problems like getting stuck in `int 0x15`
 ; inputs: es:di -> destination buffer for 24 byte entries
 ; outputs: bp = entry count, trashes all registers except esi
-; FIXME: refactor definitons
-mmap_ent equ 0x0c00             ; the number of entries will be stored at addr
 do_e820:
     ; [es:si] points to a buffer
     ; move 4 bytes off to put size at the beginning
-    ; XXX: why 4 bytes? bp is 16bit register, innit??
-    mov di, mmap_ent+4
+    mov di, e820_table_p+4
 	xor ebx, ebx		; ebx must be 0 to start
 	xor bp, bp		; keep an entry count in bp
 	mov edx, 0x0534D4150	; Place "SMAP" into edx
@@ -320,7 +323,7 @@ do_e820:
 	test ebx, ebx		; if ebx resets to 0, list is complete
 	jne short .e820lp
 .e820f:
-	mov [es:mmap_ent], bp	; store the entry count
+	mov [es:e820_table_p], bp	; store the entry count
 	clc			; there is "jc" on end of list to this point, so the carry must be cleared
 	jmp .print_himem
 .failed:

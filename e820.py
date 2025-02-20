@@ -31,6 +31,6 @@ with open(filename, 'rb') as f:
             typ = "RAM"
         sk = offset64 // 1024
 
-        print(f"0x{start64:08x} - 0x{offset64:08x} : {typ} : {sk}K ")
+        print(f"0x{start64:08x} - 0x{offset64:08x} : {typ} : {sk}K")
 
         _ = f.read(4) # padding
