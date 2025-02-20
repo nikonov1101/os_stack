@@ -94,7 +94,6 @@ boot0:
     ;
     ; size-1 = number of sectors to load
 
-.t4:
     dec byte[boot1data.size_sectors]
     mov al, byte[boot1data.size_sectors]
 
@@ -291,7 +290,6 @@ get_a20_state:
 	mov byte [.BufferBelowMB], al
 	mov al, [es:di]
 	mov byte [.BufferOverMB], al
-.t_saved:
 
 	mov ah, 1						;	check byte [0x00100500] == byte [0x0500]
 	mov byte [ds:si], 0
