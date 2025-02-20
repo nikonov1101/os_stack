@@ -8,7 +8,7 @@ bootloader:
 	nasm boot1.asm -f bin -o boot.img
 	@python3 ./free.py
 
-symbols:
+symbols: bootloader
 	cat boot1.asm | grep -v '\[ORG' > tmp.asm
 	nasm -f elf -Fdwarf tmp.asm -o tmp.elf
 	objdump -t tmp.elf > symbols.table

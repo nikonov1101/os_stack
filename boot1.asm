@@ -67,27 +67,62 @@ stage1:
     mov cx, 0x02 ; read SECOND block from disk, the first one is THIS one
     ; dx already contains the drive number we've boot from
 
+    ; ES:BX = pointer to buffer
     mov bx, stage2 ; stage1+512 must be equal to stage2 addr
-    ; 	ES:BX = pointer to buffer
     int 0x13;
+	jnc	.verify_stage2			;Success
 
-	jnc	.read_ok			;Success
-	dec	si			;retry count
-	jnz	.load_stage2
+    dec si
+	jnz	.read_stage2
 
 .load_err:
     ; handle error and hang forever
     mov si, str_err
-    mov BL, 0x04 ; error color
+    mov bl, 0x04 ; error color
     call print_string
     jmp $;
 
-.read_ok:
+.verify_stage2:
     ; check the stage2 signature
-    cmp word[stage2+510], 0xDEAD
+    cmp word[tab_boot1_sign], 0xDEAD
+    .t1:
     jne .load_err
 
-.verify_ok:
+    ; check boot1 size, if 1 sector
+    ; then we already have it loaded, jump to boot1
+    cmp byte[tab_boot1_size], 1
+    je .stage2_fully_loaded
+
+    ;
+    ; size-1 = number of sectors to load
+
+.t4:
+    dec byte[tab_boot1_size]
+    mov al, byte[tab_boot1_size]
+
+    mov si, 3 ; i = 3
+.load_stage2_more:
+    ; bootloader is larger than 1 sector, go load the rest
+
+    ; read next block from a boot disk into the memory
+    mov cx, 0x03  ; s1 = mbr, s2=boot1_start, read the rest starting from s3
+    ; 	ES:BX = pointer to buffer
+    mov bx, stage2+512 ; stage2+512 for next sectors
+    mov ah, 0x02    ; read command
+    ; dx already contains the drive number we've boot from
+
+.t3:
+    int 0x13;
+	jnc	.stage2_fully_loaded			;Success
+
+    ; reload al, try again
+    dec si
+    jz .load_err
+
+    mov al, byte[tab_boot1_size]
+	jmp	.load_stage2_more
+
+.stage2_fully_loaded:
     mov si, str_stage2_found
     mov BL, 0x07
     call print_string
@@ -154,6 +189,16 @@ byte_to_char:
 
     ret
 
+debug_ax:
+    push ax
+    call print_chr
+    mov ax, 0x0a
+    call print_chr
+    mov ax, 0x0d
+    call print_chr
+    pop ax
+    ret
+
 ; assume word is in AX
 print_word:
    push ax
@@ -178,7 +223,8 @@ str_stage2_found db 'stage2 bootloader found, passing control', 10, 13, 0
 tab_hextoc db '0123456789ABCDEF'
 
 times 510 - ($ - $$) db 0	;fill the rest of sector with 0
-dw 0xAA55			; add boot signature at the end of bootloader
+tab_boot0_sign dw 0xAA55			; add boot signature at the end of bootloader
+
 ; --- MBR end ---
 
 ; stage2 starts here: the idea is to put stage2 bootloader right after the MBR,
@@ -278,12 +324,10 @@ str_stage2 db 'stage2 bootloader started', 10, 13, 0
 str_errcode db 'error code: ', 0
 str_lowmem db 'low mem: ', 0
 str_a20_state db 10,13,'a20: ', 0
+tab_boot1_size db 1
 
 times 510 - ($ - stage2) db 0 ;; padding
-dw 0xDEAD
-
-
-
+tab_boot1_sign dw 0xDEAD
 
 
 ; stage 3.5 test code starts below
