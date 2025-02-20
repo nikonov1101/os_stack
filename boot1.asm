@@ -242,9 +242,17 @@ boot1:
     int 0x12 ; request low memory size
     ; AX = amount of continuous memory in KB starting from 0.
     ; The carry flag is set if it failed
-    jc .lowmem_err
+    jnc .lowmem_print
+
+.lowmem_err:
+    mov SI, boot1data.str_errcode
+    call print_string
+    mov al, '1' ; how to define all codes in one place?
+    call print_chr
+    jmp forever
 
 .lowmem_print:
+    ; TODO: handover maps
     call print_word
     mov al, 'k'
     call print_chr
@@ -257,14 +265,80 @@ boot1:
     add ax, '0'
     call print_chr
     pop ax
+
+.himem_detect:
+    ; referencing http://www.uruk.org/orig-grub/mem64mb.html
+    ; referencing https://wiki.osdev.org/Detecting_Memory_(x86)
+
+; use the INT 0x15, eax= 0xE820 BIOS function to get a memory map
+; note: initially di is 0, be sure to set it to a value so that the BIOS code will not be overwritten.
+;       The consequence of overwriting the BIOS code will lead to problems like getting stuck in `int 0x15`
+; inputs: es:di -> destination buffer for 24 byte entries
+; outputs: bp = entry count, trashes all registers except esi
+; FIXME: refactor definitons
+mmap_ent equ 0x0c00             ; the number of entries will be stored at addr
+do_e820:
+    ; [es:si] points to a buffer
+    ; move 4 bytes off to put size at the beginning
+    ; XXX: why 4 bytes? bp is 16bit register, innit??
+    mov di, mmap_ent+4
+	xor ebx, ebx		; ebx must be 0 to start
+	xor bp, bp		; keep an entry count in bp
+	mov edx, 0x0534D4150	; Place "SMAP" into edx
+	mov eax, 0xe820
+	mov [es:di + 20], dword 1	; force a valid ACPI 3.X entry
+	mov ecx, 24		; ask for 24 bytes
+	int 0x15
+
+	jc short .failed	; carry set on first call means "unsupported function"
+	mov edx, 0x0534D4150	; Some BIOSes apparently trash this register?
+	cmp eax, edx		; on success, eax must have been reset to "SMAP"
+	jne short .failed
+	test ebx, ebx		; ebx = 0 implies list is only 1 entry long (worthless)
+	je short .failed
+	jmp short .jmpin
+.e820lp:
+	mov eax, 0xe820		; eax, ecx get trashed on every int 0x15 call
+	mov [es:di + 20], dword 1	; force a valid ACPI 3.X entry
+	mov ecx, 24		; ask for 24 bytes again
+	int 0x15
+	jc short .e820f		; carry set means "end of list already reached"
+	mov edx, 0x0534D4150	; repair potentially trashed register
+.jmpin:
+	jcxz .skipent		; skip any 0 length entries
+	cmp cl, 20		; got a 24 byte ACPI 3.X response?
+	jbe short .notext
+	test byte [es:di + 20], 1	; if so: is the "ignore this data" bit clear?
+	je short .skipent
+.notext:
+	mov ecx, [es:di + 8]	; get lower uint32_t of memory region length
+	or ecx, [es:di + 12]	; "or" it with upper uint32_t to test for zero
+	jz .skipent		; if length uint64_t is 0, skip entry
+	inc bp			; got a good entry: ++count, move to next storage spot
+	add di, 24
+.skipent:
+	test ebx, ebx		; if ebx resets to 0, list is complete
+	jne short .e820lp
+.e820f:
+	mov [es:mmap_ent], bp	; store the entry count
+	clc			; there is "jc" on end of list to this point, so the carry must be cleared
+	jmp .print_himem
+.failed:
+	stc			; "function unsupported" error exit
+
+.print_himem:
+    jnc .print_himem2
+    mov bp, 0xffff
+
+.print_himem2:
+    mov si, boot1data.str_e820_regions
+    call print_string
+
+    mov ax, bp
+    call print_word
+
     jmp forever
 
-.lowmem_err:
-    mov SI, boot1data.str_errcode
-    call print_string
-    mov al, '1' ; how to define all codes in one place?
-    call print_chr
-    jmp forever
 
 forever:
     jmp $
@@ -319,6 +393,7 @@ boot1data:
 .str_errcode db 'error code: ', 0
 .str_lowmem db 'low mem: ', 0
 .str_a20_state db 10,13,'a20: ', 0
+.str_e820_regions db 10,13,'e820 reg: ',0
 .size_sectors db 1 ; TODO: relocate data section on expantion?
 
 times 510 - ($ - boot1) db 0 ;; padding
