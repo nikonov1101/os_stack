@@ -216,12 +216,6 @@ print_word:
    pop ax
    and ax, 0x00ff
    call byte_to_char
-
-    ;mov ax, 10
-    ;call print_chr
-    ;mov ax, 13
-    ;call print_chr
-
    ret
 
 
@@ -348,24 +342,39 @@ detech_himem:
 
 ; assume BX points to the start of the e820 entry
     mov cx, e820_table_p+4
-    mov si, 0
-.print_segment:
+    mov si, 0 ; si points to a word in table
+    mov di, word[e820_table_p] ; di contains table count
+
+.print_segment_loop:
     mov bx, cx
     mov ax, word[bx]
     call print_word
-    call crlf
 
     add si, 2
+
+    cmp si, 8
+    je .add_crlf
+    cmp si, 16
+    je .add_crlf
+    cmp si, 20
+    je .add_crlf
     cmp si, 24; end of entry?
-    je .next_segment; jump if negative
+    je .next_segment;
+    jmp .next_word
+
+.add_crlf:
+    call crlf
+
+.next_word:
     add cx, 2
-    jmp .print_segment
+    jmp .print_segment_loop
 
 .next_segment:
-    mov al, '@'
-    call print_chr
-    call crlf
-    jmp forever
+    xor si, si
+    add cx, 2
+
+    dec di
+    jnz .print_segment_loop
 
 forever:
     jmp $
