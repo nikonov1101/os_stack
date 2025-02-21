@@ -1,15 +1,15 @@
 memory map so far:
 
 0x100000: kernel32
-0x0a0000: lomem end 640k
-0x09fc00: extended bios data area 1k
+0x0a0000: lomem end @ 640k
+0x09fc00: extended bios data area @ 1k
 .........
 0x007e00: boot1
-0x7c0000: boot0 31k
+0x7c0000: boot0 @ 31k
 .........
-0x000c00: e820 maps
-0x000600: handover tables 29.5k
-0x000000: bios reserved 1.5k
+0x000c00: e820 maps @ up to boot0
+0x000600: handover tables @ 1.5k
+0x000000: bios reserved @ 1.5k
 
 
 ---------------------------------------
