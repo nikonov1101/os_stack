@@ -8,9 +8,23 @@
 ; handover table starts at 0x600
 boot_device_p equ 0x600 ; word, content of dx right after boot: 0 for fda, 0x80 for hda
 lowmem_p equ 0x602      ; word, result of int 0x12: amount of continuous memory in KB starting from 0.
+int15_c0_table_p equ 0x604; dword, points to https://stanislavs.org/helppc/int_15-c0.html results
+
+; TODO make it continous area?
+cpuid1_p equ 0x608 ; word, EBX after cpuid call
+cpuid2_p equ 0x60a ; word, EDX after cpuid call
+cpuid3_p equ 0x60c ; word, ECX after cpuid call
+cpuid_feat1_p equ 0x60e ; word, EDX after cpuid call with EAX=1 arg
+cpuid_feat2_p equ 0x610 ; word, ECX after cpuid call with EAX=1 arg
+
 ;;; TODO: place tmpGDT BEFORE e820 maps, because GDT is of known and fixed size
 ;;; TODO: is there a limit of entities in e820 table?
 e820_table_p equ 0xC00 ; himem maps
+
+;;; TODO: overhaul error codes definitions
+;;; TODO: make error codes 2 level via AX
+;;;       AH = sub-system
+;;;       AL = error code itself
 
 _start_boot0:
     cli ; clear interrupts
@@ -340,41 +354,67 @@ detech_himem:
     call print_word
     call crlf
 
-; assume BX points to the start of the e820 entry
-    mov cx, e820_table_p+4
-    mov si, 0 ; si points to a word in table
-    mov di, word[e820_table_p] ; di contains table count
+; get system configuration parameters
+; https://stanislavs.org/helppc/int_15-c0.html
+do_int15h:
+    mov ah, 0xc0
+    int 0x15
+    jc .error
 
-.print_segment_loop:
-    mov bx, cx
-    mov ax, word[bx]
+    mov [int15_c0_table_p], es
+    mov [int15_c0_table_p+2], bx
+
+    mov ax, word[es:bx+4]
     call print_word
+    call crlf
+    jmp cpuid
+    ; OK
 
-    add si, 2
+.error:
+    mov SI, boot1data.str_errcode
+    call print_string
+    mov al, '2' ; how to define all codes in one place?
+    call print_chr
+    jmp forever
 
-    cmp si, 8
-    je .add_crlf
-    cmp si, 16
-    je .add_crlf
-    cmp si, 20
-    je .add_crlf
-    cmp si, 24; end of entry?
-    je .next_segment;
-    jmp .next_word
 
-.add_crlf:
+;;; TODO: more to dig here https://wiki.osdev.org/Detecting_CPU_Topology_(80x86)
+cpuid:
+.vendor:
+    mov eax, 0
+    cpuid
+    ; copy results to the handover area
+    mov [cpuid1_p], ebx
+    mov [cpuid2_p], edx
+    mov [cpuid3_p], ecx
+
+.features:
+    xor ecx, ecx
+    xor edx, edx
+    mov eax, 1
+    cpuid
+
+    ; copy results to the handover area
+    mov [cpuid_feat1_p], edx
+    mov [cpuid_feat2_p], ecx
+
+    mov eax, edx
+    call print_word
     call crlf
 
-.next_word:
-    add cx, 2
-    jmp .print_segment_loop
+    mov eax, ecx
+    call print_word
+    call crlf
+.t1:
+    jmp forever
 
-.next_segment:
-    xor si, si
-    add cx, 2
+.error:
+    mov SI, boot1data.str_errcode
+    call print_string
+    mov al, '3' ; how to define all codes in one place?
+    call print_chr
+    jmp forever
 
-    dec di
-    jnz .print_segment_loop
 
 forever:
     jmp $
@@ -435,3 +475,5 @@ boot1data:
 times 510 - ($ - boot1) db 0 ;; padding
 .signature dw 0xDEAD
 
+
+; vim: filetype=nasm
