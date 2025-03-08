@@ -6,9 +6,25 @@
 [ORG 0x7C00]
 
 ; handover table starts at 0x600
-boot_device_p equ 0x600 ; word
-xxx_next_p equ 0x602
-e820_table_p equ 0xC00
+boot_device_p equ 0x600 ; word, content of dx right after boot: 0 for fda, 0x80 for hda
+lowmem_p equ 0x602      ; word, result of int 0x12: amount of continuous memory in KB starting from 0.
+int15_c0_table_p equ 0x604; dword, points to https://stanislavs.org/helppc/int_15-c0.html results
+
+; TODO make it continous area?
+cpuid1_p equ 0x608 ; word, EBX after cpuid call
+cpuid2_p equ 0x60a ; word, EDX after cpuid call
+cpuid3_p equ 0x60c ; word, ECX after cpuid call
+cpuid_feat1_p equ 0x60e ; word, EDX after cpuid call with EAX=1 arg
+cpuid_feat2_p equ 0x610 ; word, ECX after cpuid call with EAX=1 arg
+
+;;; TODO: place tmpGDT BEFORE e820 maps, because GDT is of known and fixed size
+;;; TODO: is there a limit of entities in e820 table?
+e820_table_p equ 0xC00 ; himem maps
+
+;;; TODO: overhaul error codes definitions
+;;; TODO: make error codes 2 level via AX
+;;;       AH = sub-system
+;;;       AL = error code itself
 
 _start_boot0:
     cli ; clear interrupts
@@ -146,7 +162,7 @@ print_chr:
         ; Bit 2 = Red (foreground)
         ; Bit 1 = Green (foreground)
         ; Bit 0 = Blue (foreground)
-    mov BL, 0x4C; text attributes
+    mov bl, 0x07 ; no fancy colors yet, ignore caller colors as well
     int 0x10  ; call bios procedure
     ret
 
@@ -175,7 +191,6 @@ byte_to_char:
     shr bx, 4       ; move significant bits to the right
     add bx, boot0data.tab_hextoc ; now offset in BL, add the base address of the table
     mov al, byte[bx]   ; reference a byte pointed by BX, load into AL
-    mov bl, 0x07
     call print_chr ; print a byte from AL
 
 
@@ -186,7 +201,6 @@ byte_to_char:
     ; the rest is the same as above
     add bx, boot0data.tab_hextoc
     mov al, byte[bx]
-    mov bl, 0x07
     call print_chr
 
     ret
@@ -194,11 +208,17 @@ byte_to_char:
 debug_ax:
     push ax
     call print_chr
-    mov ax, 0x0a
+    mov ax, 10 ; \r
     call print_chr
-    mov ax, 0x0d
+    mov ax, 13 ; \n
     call print_chr
     pop ax
+    ret
+crlf:
+    mov al, 10
+    call print_chr
+    mov al, 13
+    call print_chr
     ret
 
 ; assume word is in AX
@@ -210,7 +230,6 @@ print_word:
    pop ax
    and ax, 0x00ff
    call byte_to_char
-
    ret
 
 
@@ -258,7 +277,8 @@ boot1:
     jmp forever
 
 .lowmem_print:
-    ; TODO: handover maps
+    ; save AL in the handover area
+    mov [lowmem_p], ax
     call print_word
     mov al, 'k'
     call print_chr
@@ -320,21 +340,79 @@ detech_himem:
 .write_rec_count:
 	mov [es:e820_table_p], bp	; store the entry count
 	clc			; there is "jc" on end of list to this point, so the carry must be cleared
-	jmp .print_himem
+	jmp .print_himem2
 .failed:
+    mov bp, 0
 	stc			; "function unsupported" error exit
 
-.print_himem:
-    jnc .print_himem2
-    mov bp, 0xffff
-
 .print_himem2:
+    clc ; just in case
     mov si, boot1data.str_e820_regions
     call print_string
 
     mov ax, bp
     call print_word
+    call crlf
 
+; get system configuration parameters
+; https://stanislavs.org/helppc/int_15-c0.html
+do_int15h:
+    mov ah, 0xc0
+    int 0x15
+    jc .error
+
+    mov [int15_c0_table_p], es
+    mov [int15_c0_table_p+2], bx
+
+    mov ax, word[es:bx+4]
+    call print_word
+    call crlf
+    jmp cpuid
+    ; OK
+
+.error:
+    mov SI, boot1data.str_errcode
+    call print_string
+    mov al, '2' ; how to define all codes in one place?
+    call print_chr
+    jmp forever
+
+
+;;; TODO: more to dig here https://wiki.osdev.org/Detecting_CPU_Topology_(80x86)
+cpuid:
+.vendor:
+    mov eax, 0
+    cpuid
+    ; copy results to the handover area
+    mov [cpuid1_p], ebx
+    mov [cpuid2_p], edx
+    mov [cpuid3_p], ecx
+
+.features:
+    xor ecx, ecx
+    xor edx, edx
+    mov eax, 1
+    cpuid
+
+    ; copy results to the handover area
+    mov [cpuid_feat1_p], edx
+    mov [cpuid_feat2_p], ecx
+
+    mov eax, edx
+    call print_word
+    call crlf
+
+    mov eax, ecx
+    call print_word
+    call crlf
+.t1:
+    jmp forever
+
+.error:
+    mov SI, boot1data.str_errcode
+    call print_string
+    mov al, '3' ; how to define all codes in one place?
+    call print_chr
     jmp forever
 
 
@@ -397,3 +475,5 @@ boot1data:
 times 510 - ($ - boot1) db 0 ;; padding
 .signature dw 0xDEAD
 
+
+; vim: filetype=nasm
