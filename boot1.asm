@@ -106,13 +106,14 @@ load_boot1:
 
 .verify:
     cmp word[boot1_signature], 0xDEAD
-    je .boot1_fully_loaded
+    je .check_size
 
     ; show error otherwise
 .verify_err:
     mov ax, err_boot0_bad_checksum
     jmp print_err
 
+.check_size:
     ; check boot1 size, if 1 it's the 1-sector long,
     ; then we already have it loaded, jump directly to boot1
     cmp byte[boot1data.size_sectors], 1
@@ -257,7 +258,33 @@ boot1data:
     .str_lowmem db 'low mem: ', 0
     .str_a20_state db 'a20: ', 0
     .str_e820_regions db 'e820 reg: ', 0
-    .size_sectors db 1 ; TODO: relocate data section on expantion?
+    .size_sectors db 2 ; TODO: relocate data section on expantion?
+
+; early mode GDT lives here
+; http://web.archive.org/web/20190424213806/http://www.osdever.net/tutorials/view/the-world-of-protected-mode
+gdt:
+.null:
+    dq  0
+.code:
+    dw 0x0FFFF
+    dw 0
+    db 0; continue of the base address
+    db 10011010b ; ring0-only readable code segment, nonconforming
+    db 11001111b ; 32-bit code, 4kb segment
+    db 0
+.data:
+    dw 0x0FFFF
+    dw 0
+    db 0; continue of the base address
+    db 10010010b ; ring0-only writeable data segment, expand down
+    db 11001111b ; same as for code segment
+    db 0
+.end:
+.desc:
+   db .end - .null ; number of records
+   dw gdt          ; start of the table
+
+
 
 times 510 - ($ - $$) db 0	;fill the rest of sector with 0
 boot0_signature dw 0xAA55			; add boot signature at the end of bootloader
@@ -402,9 +429,9 @@ cpuid:
     ; copy results to the handover area
     mov [cpuid_feat1_p], edx
     mov [cpuid_feat2_p], ecx
+    jmp setup_gdt
 
 forever:
-
     jmp $
 
 ;	out:
@@ -449,9 +476,50 @@ get_a20_state:
 	popf
 	ret
 
+setup_gdt:
+    xor ax, ax
+    mov ds, ax
+    lgdt [gdt.desc]
+    .debug:
+
+setup_pmode:
+    mov eax, cr0
+    or eax, 1
+    mov cr0, eax
+
+    ; jmp 0x08:start32
+    ; what if NOT a far jump???
+    jmp start32
 
 times 510 - ($ - boot1) db 0 ;; padding
 boot1_signature dw 0xDEAD
 
+;
+;;
+;;; beware! third disk block starts here
+;;
+;
+;;;  XXX: relocate this segment to 1m
+[BITS 32]
+start32:
+mov ax, 0x08
+mov ds, ax
+mov ss, ax
+
+; actually we have more memory avaiulable for the stack:
+; we could load a lowmem_p, multiply it by 1024 to get
+; amount of memoryin bytes, and use that as a stack top.
+; BUT the stack must be at the fixed location, in order
+; to be able to link a kernel code.
+mov esp, 0x90000
+; here we are, this is a 32 bit code here.
+mov eax, 0xB8000
+mov byte[eax], '@'
+inc eax
+mov byte[eax], 0x1b
+jmp $
+
+times 510 - ($ - start32) db 0 ;; padding
+start32_signature dw 0xCafe
 
 ; vim: filetype=nasm
