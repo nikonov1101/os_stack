@@ -1,3 +1,5 @@
+%define KERNEL_BLOCK_SZ 1
+
 ;tell the assembler that its a 16 bit code
 [BITS 16]
 
@@ -24,15 +26,15 @@ err_boot0_boo1more_failed equ 0x0103
 ;
 err_boot1_lowmem_err equ 0x0201
 err_boot1_int15_failed equ 0x0202
+err_boot1_e820_failed equ 0x0203
 
 ;;; TODO: place tmpGDT BEFORE e820 maps, because GDT is of known and fixed size
 ;;; TODO: is there a limit of entities in e820 table?
 e820_table_p equ 0xC00 ; himem maps
 
-;;; TODO: overhaul error codes definitions
-;;; TODO: make error codes 2 level via AX
-;;;       AH = sub-system
-;;;       AL = error code itself
+
+
+
 
 _start_boot0:
     cli ; clear interrupts
@@ -86,9 +88,9 @@ load_boot1:
 
     mov	si, 3			; for i < 3, do:
 .read:
-    ; read next block from a boot disk into the memory
+    ; read next blocks from a boot disk into the memory
     mov ah, 0x02    ; read command
-    mov al, 0x01    ; sector count
+    mov al, 1+KERNEL_BLOCK_SZ    ; read 1 sector with boot1, and rest of the kernel blocks
     mov cx, 0x02 ; read SECOND block from disk, the first one is THIS one
     ; dx already contains the drive number we've boot from
 
@@ -103,48 +105,33 @@ load_boot1:
 .load_err:
     mov ax, err_boot0_load_failed
     jmp print_err
-
-.verify:
-    cmp word[boot1_signature], 0xDEAD
-    je .check_size
-
-    ; show error otherwise
 .verify_err:
     mov ax, err_boot0_bad_checksum
     jmp print_err
 
-.check_size:
-    ; check boot1 size, if 1 it's the 1-sector long,
-    ; then we already have it loaded, jump directly to boot1
-    cmp byte[boot1data.size_sectors], 1
-    je .boot1_fully_loaded
+.verify:
+    cmp word[boot1_signature], 0xDEAD
+    jne .verify_err
 
-    ; size-1 = number of sectors to load
-    dec byte[boot1data.size_sectors]
+load_himem:
+;;;  XXX: it will be a problem when kernel exceeds 128k
+    mov si, start32  ; src pointer
 
-    mov si, 3 ; i = 3
-.load_boot1_more:
-    mov al, byte[boot1data.size_sectors]
-    ; bootloader is larger than 1 sector, go load the rest
+    ; es:di is a dest pointer to the 1mb linear address
+    mov di, 0x100
+    mov ax, 0xfff0
+    mov es, ax
 
-    ; read next block from a boot disk into the memory
-    mov cx, 0x03  ; s1 = mbr, s2=boot1_start, read the rest starting from s3
-    ; 	ES:BX = pointer to buffer
-    mov bx, boot1+512 ; offset for next sectors
-    mov ah, 0x02    ; read command
-    ; dx already contains the drive number we've boot from
+.loop:
+    mov ax, [si]
+    mov [es:di], ax
 
-    int 0x13;
-	jnc	.boot1_fully_loaded			;Success
+    inc di
+    inc si
+    cmp si, start32 + KERNEL_BLOCK_SZ * 512
+    jl .loop
 
-    dec si
-    jnz .load_boot1_more
-
-.load_more_err:
-    mov ax, err_boot0_boo1more_failed
-    jmp print_err
-
-.boot1_fully_loaded:
+.boot1_ready:
     mov si, boot0data.str_found
     mov BL, 0x07
     call print_string
@@ -258,31 +245,7 @@ boot1data:
     .str_lowmem db 'low mem: ', 0
     .str_a20_state db 'a20: ', 0
     .str_e820_regions db 'e820 reg: ', 0
-    .size_sectors db 2 ; TODO: relocate data section on expantion?
 
-; early mode GDT lives here
-; http://web.archive.org/web/20190424213806/http://www.osdever.net/tutorials/view/the-world-of-protected-mode
-gdt:
-.null:
-    dq  0
-.code:
-    dw 0x0FFFF
-    dw 0
-    db 0; continue of the base address
-    db 10011010b ; ring0-only readable code segment, nonconforming
-    db 11001111b ; 32-bit code, 4kb segment
-    db 0
-.data:
-    dw 0x0FFFF
-    dw 0
-    db 0; continue of the base address
-    db 10010010b ; ring0-only writeable data segment, expand down
-    db 11001111b ; same as for code segment
-    db 0
-.end:
-.desc:
-   db .end - .null ; number of records
-   dw gdt          ; start of the table
 
 
 
@@ -383,13 +346,15 @@ detech_himem:
 	clc			; there is "jc" on end of list to this point, so the carry must be cleared
 	jmp .print_himem
 .failed:
-    mov bp, 0
-	stc			; "function unsupported" error exit
+    mov ax, err_boot1_lowmem_err
+    jmp print_err ; dead end
 
 .print_himem:
-    clc ; just in case
     mov si, boot1data.str_e820_regions
     call print_string
+
+    ; here we believe there are at least some himem to use,
+    ; let's go load code32 right at the 1mb mark.
 
     mov ax, bp
     call print_word
@@ -487,37 +452,64 @@ setup_pmode:
     or eax, 1
     mov cr0, eax
 
-    ; jmp 0x08:start32
-    ; what if NOT a far jump???
-    jmp start32
+    .dig_here:
+    jmp 0x100:0
+
+; early mode GDT lives here
+; http://web.archive.org/web/20190424213806/http://www.osdever.net/tutorials/view/the-world-of-protected-mode
+gdt:
+.null:
+    dq  0
+.code:
+    dw 0x0FFFF
+    dw 0
+    db 0; continue of the base address
+    db 10011010b ; ring0-only readable code segment, nonconforming
+    db 11001111b ; 32-bit code, 4kb segment
+    db 0
+.data:
+    dw 0x0FFFF
+    dw 0
+    db 0; continue of the base address
+    db 10010010b ; ring0-only writeable data segment, expand down
+    db 11001111b ; same as for code segment
+    db 0
+.end:
+.desc:
+   db .end - .null ; number of records
+   dw gdt          ; start of the table
+
+[bits 32]
+reload_CS:
+    ; main kernel code
+    mov   eax, 0x08
+    mov   ds, eax
+    mov   es, eax
+    mov   fs, eax
+    mov   gs, eax
+    mov   ss, ax
+    movzx esp, sp
+
+    ; Display hi in grey at top of screen
+    mov   dword [0xB8000], 0x07690748
+    jmp   $
+
 
 times 510 - ($ - boot1) db 0 ;; padding
 boot1_signature dw 0xDEAD
 
 ;
-;;
-;;; beware! third disk block starts here
-;;
+; ----------------------------------------------------
+; stub32 starts here
+; ----------------------------------------------------
 ;
-;;;  XXX: relocate this segment to 1m
-[BITS 32]
-start32:
-mov ax, 0x08
-mov ds, ax
-mov ss, ax
 
-; actually we have more memory avaiulable for the stack:
-; we could load a lowmem_p, multiply it by 1024 to get
-; amount of memoryin bytes, and use that as a stack top.
-; BUT the stack must be at the fixed location, in order
-; to be able to link a kernel code.
-mov esp, 0x90000
-; here we are, this is a 32 bit code here.
-mov eax, 0xB8000
-mov byte[eax], '@'
-inc eax
-mov byte[eax], 0x1b
-jmp $
+start32:
+; mov eax, 0xB8000
+; mov byte[eax], '@'
+; inc eax
+; mov byte[eax], 0x1b
+;jmp $
 
 times 510 - ($ - start32) db 0 ;; padding
 start32_signature dw 0xCafe
