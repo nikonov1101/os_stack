@@ -17,6 +17,14 @@ cpuid3_p equ 0x60c ; word, ECX after cpuid call
 cpuid_feat1_p equ 0x60e ; word, EDX after cpuid call with EAX=1 arg
 cpuid_feat2_p equ 0x610 ; word, ECX after cpuid call with EAX=1 arg
 
+;;; error code
+err_boot0_load_failed equ 0x0101
+err_boot0_bad_checksum equ 0x0102
+err_boot0_boo1more_failed equ 0x0103
+;
+err_boot1_lowmem_err equ 0x0201
+err_boot1_int15_failed equ 0x0202
+
 ;;; TODO: place tmpGDT BEFORE e820 maps, because GDT is of known and fixed size
 ;;; TODO: is there a limit of entities in e820 table?
 e820_table_p equ 0xC00 ; himem maps
@@ -68,21 +76,16 @@ boot0:
     mov word [boot_device_p], dx
     mov al, dl
     call byte_to_char
+    call crlf
 
-    ; \r \n
-    mov al, 10
-    call print_chr
-    mov al, 13
-    call print_chr
-
-.load_boot1:
+load_boot1:
 .reset_drive:
     ; TODO: should I set ah=0x0d if we boot from a hard drive?
     mov ah, 0x00
     int 0x13
 
     mov	si, 3			; for i < 3, do:
-.read_boot1:
+.read:
     ; read next block from a boot disk into the memory
     mov ah, 0x02    ; read command
     mov al, 0x01    ; sector count
@@ -92,35 +95,35 @@ boot0:
     ; ES:BX = pointer to buffer
     mov bx, boot1 ; boot0+512 must be equal to boot1 addr
     int 0x13;
-	jnc	.verify_boot1			;Success
+	jnc	.verify			;Success
 
     dec si
-	jnz	.read_boot1
+	jnz	.read
 
 .load_err:
-    ; handle error and hang forever
-    mov si, boot0data.str_err
-    mov bl, 0x04 ; error color
-    call print_string
-    jmp $;
+    mov ax, err_boot0_load_failed
+    jmp print_err
 
-.verify_boot1:
-    cmp word[boot1data.signature], 0xDEAD
-    jne .load_err
+.verify:
+    cmp word[boot1_signature], 0xDEAD
+    je .boot1_fully_loaded
 
-    ; check boot1 size, if 1 sector
-    ; then we already have it loaded, jump to boot1
+    ; show error otherwise
+.verify_err:
+    mov ax, err_boot0_bad_checksum
+    jmp print_err
+
+    ; check boot1 size, if 1 it's the 1-sector long,
+    ; then we already have it loaded, jump directly to boot1
     cmp byte[boot1data.size_sectors], 1
     je .boot1_fully_loaded
 
-    ;
     ; size-1 = number of sectors to load
-
     dec byte[boot1data.size_sectors]
-    mov al, byte[boot1data.size_sectors]
 
     mov si, 3 ; i = 3
 .load_boot1_more:
+    mov al, byte[boot1data.size_sectors]
     ; bootloader is larger than 1 sector, go load the rest
 
     ; read next block from a boot disk into the memory
@@ -133,19 +136,18 @@ boot0:
     int 0x13;
 	jnc	.boot1_fully_loaded			;Success
 
-    ; reload al, try again
     dec si
-    jz .load_err
+    jnz .load_boot1_more
 
-    mov al, byte[boot1data.size_sectors]
-	jmp	.load_boot1_more
+.load_more_err:
+    mov ax, err_boot0_boo1more_failed
+    jmp print_err
 
 .boot1_fully_loaded:
     mov si, boot0data.str_found
     mov BL, 0x07
     call print_string
     jmp boot1
-
 
 ; Assume that ASCII value is in register AL
 ; assume text color options is register BL
@@ -202,18 +204,8 @@ byte_to_char:
     add bx, boot0data.tab_hextoc
     mov al, byte[bx]
     call print_chr
-
     ret
 
-debug_ax:
-    push ax
-    call print_chr
-    mov ax, 10 ; \r
-    call print_chr
-    mov ax, 13 ; \n
-    call print_chr
-    pop ax
-    ret
 crlf:
     mov al, 10
     call print_chr
@@ -232,20 +224,43 @@ print_word:
    call byte_to_char
    ret
 
+; assume error in AX:
+;    AH - sub-system ID, references a part of a boot process
+;    AL - the error code itself
+print_err:
+    push ax
+
+    mov si, boot0data.str_err
+    call print_string
+
+    pop ax
+    call print_word
+    jmp $ ; hang forever
+
 
 ; boot0 data,
 ; note that printing \r \n (10, 13) via bios procedures
 ; corretly move the cursor on a next line, so you don;t have to advance
 ; the cursor position by hand, which is nice.
 boot0data:
-.str_hello db 'boot0 bootloader started', 10, 13 , 0
-.str_bootdrive db 'boot drive: ', 0
-.str_err db 'Error loading boot1', 10, 13, 0
-.str_found db 'boot1 found, passing control', 10, 13, 0
-.tab_hextoc db '0123456789ABCDEF'
+    .str_hello db 'boot0 started', 10, 13 , 0
+    .str_bootdrive db 'boot drive: ', 0
+    .str_err db 'ERR: ', 0
+    .str_found db 'goto boot1', 10, 13, 0
+    .tab_hextoc db '0123456789ABCDEF'
+
+; boot1 data
+boot1data:
+    .var_buf_below_mb	db 0
+    .var_buf_above_mb	db 0
+    .str_hello db 'boot1 started', 10, 13, 0
+    .str_lowmem db 'low mem: ', 0
+    .str_a20_state db 'a20: ', 0
+    .str_e820_regions db 'e820 reg: ', 0
+    .size_sectors db 1 ; TODO: relocate data section on expantion?
 
 times 510 - ($ - $$) db 0	;fill the rest of sector with 0
-.mbr_signature dw 0xAA55			; add boot signature at the end of bootloader
+boot0_signature dw 0xAA55			; add boot signature at the end of bootloader
 
 ; --- MBR end ---
 
@@ -270,11 +285,8 @@ boot1:
     jnc .lowmem_print
 
 .lowmem_err:
-    mov SI, boot1data.str_errcode
-    call print_string
-    mov al, '1' ; how to define all codes in one place?
-    call print_chr
-    jmp forever
+    mov ax, err_boot1_lowmem_err
+    jmp print_err
 
 .lowmem_print:
     ; save AL in the handover area
@@ -282,6 +294,7 @@ boot1:
     call print_word
     mov al, 'k'
     call print_chr
+    call crlf
 
 .set_a20:
     mov si, boot1data.str_a20_state
@@ -290,6 +303,7 @@ boot1:
     push ax
     add ax, '0'
     call print_chr
+    call crlf
     pop ax
 
 detech_himem:
@@ -340,12 +354,12 @@ detech_himem:
 .write_rec_count:
 	mov [es:e820_table_p], bp	; store the entry count
 	clc			; there is "jc" on end of list to this point, so the carry must be cleared
-	jmp .print_himem2
+	jmp .print_himem
 .failed:
     mov bp, 0
 	stc			; "function unsupported" error exit
 
-.print_himem2:
+.print_himem:
     clc ; just in case
     mov si, boot1data.str_e820_regions
     call print_string
@@ -359,23 +373,14 @@ detech_himem:
 do_int15h:
     mov ah, 0xc0
     int 0x15
-    jc .error
+    jnc .save
 
+    mov ax, err_boot1_int15_failed
+    jmp print_err
+
+.save:
     mov [int15_c0_table_p], es
     mov [int15_c0_table_p+2], bx
-
-    mov ax, word[es:bx+4]
-    call print_word
-    call crlf
-    jmp cpuid
-    ; OK
-
-.error:
-    mov SI, boot1data.str_errcode
-    call print_string
-    mov al, '2' ; how to define all codes in one place?
-    call print_chr
-    jmp forever
 
 
 ;;; TODO: more to dig here https://wiki.osdev.org/Detecting_CPU_Topology_(80x86)
@@ -398,25 +403,8 @@ cpuid:
     mov [cpuid_feat1_p], edx
     mov [cpuid_feat2_p], ecx
 
-    mov eax, edx
-    call print_word
-    call crlf
-
-    mov eax, ecx
-    call print_word
-    call crlf
-.t1:
-    jmp forever
-
-.error:
-    mov SI, boot1data.str_errcode
-    call print_string
-    mov al, '3' ; how to define all codes in one place?
-    call print_chr
-    jmp forever
-
-
 forever:
+
     jmp $
 
 ;	out:
@@ -437,9 +425,9 @@ get_a20_state:
 	mov di, 0x0510
 
 	mov al, [ds:si]					;	save old values
-	mov byte [boot1data.BufferBelowMB], al
+	mov byte [boot1data.var_buf_below_mb], al
 	mov al, [es:di]
-	mov byte [boot1data.BufferOverMB], al
+	mov byte [boot1data.var_buf_above_mb], al
 
 	mov ah, 1						;	check byte [0x00100500] == byte [0x0500]
 	mov byte [ds:si], 0
@@ -449,9 +437,9 @@ get_a20_state:
 	jne .exit
 	dec ah
 .exit:
-	mov al, [boot1data.BufferBelowMB]
+	mov al, [boot1data.var_buf_below_mb]
 	mov [ds:si], al
-	mov al, [boot1data.BufferOverMB]
+	mov al, [boot1data.var_buf_above_mb]
 	mov [es:di], al
 	shr ax, 8
 	pop es
@@ -461,19 +449,9 @@ get_a20_state:
 	popf
 	ret
 
-; boot1 data
-boot1data:
-.BufferBelowMB:	db 0
-.BufferOverMB	db 0
-.str_hello db 'boot1 started', 10, 13, 0
-.str_errcode db 'error code: ', 0
-.str_lowmem db 'low mem: ', 0
-.str_a20_state db 10,13,'a20: ', 0
-.str_e820_regions db 10,13,'e820 reg: ',0
-.size_sectors db 1 ; TODO: relocate data section on expantion?
 
 times 510 - ($ - boot1) db 0 ;; padding
-.signature dw 0xDEAD
+boot1_signature dw 0xDEAD
 
 
 ; vim: filetype=nasm
