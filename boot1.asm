@@ -19,6 +19,17 @@ cpuid3_p equ 0x60c ; word, ECX after cpuid call
 cpuid_feat1_p equ 0x60e ; word, EDX after cpuid call with EAX=1 arg
 cpuid_feat2_p equ 0x610 ; word, ECX after cpuid call with EAX=1 arg
 
+;;;  FIXME: we've lost a byte at 0x612 here !!!
+video_screen_width_p equ 0x613 ; BYTE, max COLUMNS of a screen
+video_cursor_column_p equ 0x614 ; BYTE, x position on a screen
+video_cursor_row_p equ 0x615 ; BYTE, y position on a screen
+video_mem_offset equ 0x616   ; WORD, cursor offset in a video mem
+
+
+;;; TODO: place tmpGDT BEFORE e820 maps, because GDT is of known and fixed size
+;;; TODO: is there a limit of entities in e820 table?
+e820_table_p equ 0xC00 ; himem maps
+
 ;;; error code
 err_boot0_load_failed equ 0x0101
 err_boot0_bad_checksum equ 0x0102
@@ -27,14 +38,6 @@ err_boot0_boo1more_failed equ 0x0103
 err_boot1_lowmem_err equ 0x0201
 err_boot1_int15_failed equ 0x0202
 err_boot1_e820_failed equ 0x0203
-
-;;; TODO: place tmpGDT BEFORE e820 maps, because GDT is of known and fixed size
-;;; TODO: is there a limit of entities in e820 table?
-e820_table_p equ 0xC00 ; himem maps
-
-
-
-
 
 _start_boot0:
     cli ; clear interrupts
@@ -47,14 +50,13 @@ boot0:
 	mov	ES, AX
 	mov	DS, AX
 	mov	SS, AX
-	mov	SP, _start_boot0 ;Top of stack
-	mov	DI, SP			  ;is bottom of relocation point
+	mov	SP, _start_boot0  ;Top of stack
 
     ; save the boot disk pointer in DL
     push dx
 
     ; set video mode, assuming AH = 0
-    mov AL, 0x12 ;  (16-color 640x480)
+    mov AL, 0x03 ;  (80x25, color)
     int 0x10
 
     ; set the cursor position
@@ -226,6 +228,35 @@ print_err:
     jmp $ ; hang forever
 
 
+detect_cursor_pos:
+    xor ax, ax
+    ;;; TODO: move the whole word at once?
+    mov al, byte[0x450]
+    mov byte[video_cursor_column_p], al
+
+    mov al, byte[0x451]
+    mov byte[video_cursor_row_p], al
+
+    mov al, byte[0x44A]
+    imul ax, 2 ; each char takes 2 bytes in memory:
+    ; the character value itself, and its color
+    mov byte[video_screen_width_p], al
+
+    ;;;  XXX: dirty experiments, cleanup needed.
+    xor  ecx, ecx
+    mov cl, byte[video_cursor_row_p]
+    imul cx, word[video_screen_width_p]
+
+    xor ax, ax
+    mov al, byte[video_cursor_column_p]
+    add cx, ax
+
+    mov word[video_mem_offset], cx
+    ; ^ now CX contains a valid memory *OFFSET* in video buffer
+    ret
+
+
+
 ; boot0 data,
 ; note that printing \r \n (10, 13) via bios procedures
 ; corretly move the cursor on a next line, so you don;t have to advance
@@ -287,8 +318,14 @@ boot1:
     call crlf
 
 .set_a20:
+    ; enable A20 line
+    in al, 0x92
+    or al, 2
+    out 0x92, al
+
     mov si, boot1data.str_a20_state
     call print_string
+
     call get_a20_state
     push ax
     add ax, '0'
@@ -445,15 +482,23 @@ setup_gdt:
     xor ax, ax
     mov ds, ax
     lgdt [gdt.desc]
-    .debug:
 
 setup_pmode:
     mov eax, cr0
     or eax, 1
     mov cr0, eax
 
-    .dig_here:
-    jmp 0x100:0
+    call detect_cursor_pos
+
+.dig_here:
+    ;;;  XXX: looks like we've lost a return address on a stack after the int10
+    ;;;  XXX: so it'd better to add pusha/popa here and here.
+    ;mov ax, word[video_mem_offset]
+   ; call print_word
+   ; call crlf
+
+    jmp code32:reload_CS
+
 
 ; early mode GDT lives here
 ; http://web.archive.org/web/20190424213806/http://www.osdever.net/tutorials/view/the-world-of-protected-mode
@@ -476,23 +521,47 @@ gdt:
     db 0
 .end:
 .desc:
-   db .end - .null ; number of records
-   dw gdt          ; start of the table
+   dw .end - gdt -1 ; number of records
+   dd gdt          ;  start of the table
+
+code32 equ gdt.code - gdt
+data32 equ gdt.data - gdt
 
 [bits 32]
 reload_CS:
-    ; main kernel code
-    mov   eax, 0x08
-    mov   ds, eax
-    mov   es, eax
-    mov   fs, eax
-    mov   gs, eax
-    mov   ss, ax
-    movzx esp, sp
+    mov ax, data32
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    ; stack early
+    mov ss, ax
+    mov ebp, 0x9c000
+    mov esp, ebp
 
-    ; Display hi in grey at top of screen
-    mov   dword [0xB8000], 0x07690748
-    jmp   $
+    xor ecx, ecx
+    mov ecx, [video_mem_offset]
+    add ecx, 0xB8000
+
+    mov esi, .str32_hello
+.hello32:
+    mov al, byte[esi]
+    or al, al
+    jz .done
+
+    mov byte[ecx], al
+    inc ecx
+    mov byte[ecx], 0x02
+    inc ecx
+
+    inc esi ; i++
+    jmp .hello32
+
+.done:
+    hlt
+
+
+.str32_hello db 'pmode: hey, in 32-bit mode now', 0
 
 
 times 510 - ($ - boot1) db 0 ;; padding
