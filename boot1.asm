@@ -8,6 +8,8 @@
 [ORG 0x7C00]
 
 ; handover table starts at 0x600
+;;; TODO: probably we should stop naming each individual byte,
+;;;      and declare some struct instead.
 boot_device_p equ 0x600 ; word, content of dx right after boot: 0 for fda, 0x80 for hda
 lowmem_p equ 0x602      ; word, result of int 0x12: amount of continuous memory in KB starting from 0.
 int15_c0_table_p equ 0x604; dword, points to https://stanislavs.org/helppc/int_15-c0.html results
@@ -19,10 +21,7 @@ cpuid3_p equ 0x60c ; word, ECX after cpuid call
 cpuid_feat1_p equ 0x60e ; word, EDX after cpuid call with EAX=1 arg
 cpuid_feat2_p equ 0x610 ; word, ECX after cpuid call with EAX=1 arg
 
-video_screen_width_p equ 0x612 ; BYTE, max COLUMNS of a screen
-video_cursor_column_p equ 0x613 ; BYTE, x position on a screen
-video_cursor_row_p equ 0x614 ; BYTE, y position on a screen
-video_mem_offset equ 0x615   ; WORD, cursor offset in a video mem
+video_mem_offset equ 0x612   ; DOUBLE WORD, cursor offset in a video mem
 
 ;;; TODO: place tmpGDT BEFORE e820 maps, because GDT is of known and fixed size
 ;;; TODO: is there a limit of entities in e820 table?
@@ -64,9 +63,9 @@ boot0:
     int 0x10
 
 .main:
-    mov SI, boot0data.str_hello ; SI points to the beginning of the string
-    mov BL, 0x03      ; text color
-    call    print_string
+    mov si, boot0data.str_hello ; SI points to the beginning of the string
+    mov bl, 0x03      ; text color
+    call print_string
 
     ;
     ; print boot device number
@@ -129,7 +128,6 @@ load_boot1:
     jmp boot1
 
 ; Assume that ASCII value is in register AL
-; assume text color options is register BL
 print_chr:
     mov ah, 0x0E ; bios procedure number
     mov bh, 0x00 ; page number
@@ -210,7 +208,7 @@ print_err:
 ;; return (width * 2) * rows + rows in CX
 ; trashes AX, CX
 detect_cursor_pos:
-    xor cx, cx
+    xor ecx, ecx
     xor ax, ax
 
     mov cx, word[0x44A] ; width
@@ -222,6 +220,9 @@ detect_cursor_pos:
 
     mov al, byte[0x450]; cols
     add cx, ax
+
+    add ecx, 0xB8000
+    mov dword[video_mem_offset], ecx
 
     ret
 
@@ -239,14 +240,43 @@ boot0data:
 
 ; boot1 data
 boot1data:
-    .var_buf_below_mb	db 0
-    .var_buf_above_mb	db 0
     .str_hello db 'boot1 started', 10, 13, 0
     .str_lowmem db 'low mem: ', 0
-    .str_a20_state db 'a20: ', 0
     .str_e820_regions db 'e820 reg: ', 0
 
+early32data:
+    .hello db 'pmode: hey, in 32-bit mode now', 0
 
+; early mode GDT lives here
+; http://web.archive.org/web/20190424213806/http://www.osdever.net/tutorials/view/the-world-of-protected-mode
+;;; TODO: move to 0x700 or so, prevent adress space fragmentation
+gdt:
+.null:
+    dq  0
+.code:
+    dw 0x0FFFF
+    dw 0
+    db 0; continue of the base address
+    db 10011010b ; ring0-only readable code segment, nonconforming
+    db 11001111b ; 32-bit code, 4kb segment
+    db 0
+.data:
+    dw 0x0FFFF
+    dw 0
+    db 0; continue of the base address
+    db 10010010b ; ring0-only writeable data segment, expand down
+    db 11001111b ; same as for code segment
+    db 0
+.end:
+.desc:
+   dw .end - gdt -1 ; number of records
+   dd gdt          ;  start of the table
+
+code32 equ gdt.code - gdt
+data32 equ gdt.data - gdt
+; please note that we CANNOT call anything
+; ABOVE the code32. it probably a good idea to relocate
+; the GDT all the way down closer to a handover table.
 
 
 times 510 - ($ - $$) db 0	;fill the rest of sector with 0
@@ -259,7 +289,6 @@ boot0_signature dw 0xAA55			; add boot signature at the end of bootloader
 ; offset from .ORG is 512 byte to match the size of a disk sector
 boot1:
     mov SI, boot1data.str_hello
-    mov BL, 0x02
     call print_string
 
     ; print in advance, src=AX  will be trashed
@@ -286,21 +315,11 @@ boot1:
     call print_chr
     call crlf
 
-.set_a20:
+set_a20:
     ; enable A20 line
     in al, 0x92
     or al, 2
     out 0x92, al
-
-    mov si, boot1data.str_a20_state
-    call print_string
-
-    call get_a20_state
-    push ax
-    add ax, '0'
-    call print_chr
-    call crlf
-    pop ax
 
 detech_himem:
 ; referencing http://www.uruk.org/orig-grub/mem64mb.html
@@ -359,9 +378,6 @@ detech_himem:
     mov si, boot1data.str_e820_regions
     call print_string
 
-    ; here we believe there are at least some himem to use,
-    ; let's go load code32 right at the 1mb mark.
-
     mov ax, bp
     call print_word
     call crlf
@@ -402,96 +418,22 @@ cpuid:
     mov [cpuid_feat2_p], ecx
     jmp setup_gdt
 
-forever:
-    jmp $
-
-;	out:
-;		ax - state (0 - disabled, 1 - enabled)
-get_a20_state:
-	pushf
-	push si
-	push di
-	push ds
-	push es
-
-	mov ax, 0x0000					;	0x0000:0x0500(0x00000500) -> ds:si
-	mov ds, ax
-	mov si, 0x0500
-
-	not ax							;	0xffff:0x0510(0x00100500) -> es:di
-	mov es, ax
-	mov di, 0x0510
-
-	mov al, [ds:si]					;	save old values
-	mov byte [boot1data.var_buf_below_mb], al
-	mov al, [es:di]
-	mov byte [boot1data.var_buf_above_mb], al
-
-	mov ah, 1						;	check byte [0x00100500] == byte [0x0500]
-	mov byte [ds:si], 0
-	mov byte [es:di], 1
-	mov al, [ds:si]
-	cmp al, [es:di]
-	jne .exit
-	dec ah
-.exit:
-	mov al, [boot1data.var_buf_below_mb]
-	mov [ds:si], al
-	mov al, [boot1data.var_buf_above_mb]
-	mov [es:di], al
-	shr ax, 8
-	pop es
-	pop ds
-	pop di
-	pop si
-	popf
-	ret
 
 setup_gdt:
     xor ax, ax
     mov ds, ax
     lgdt [gdt.desc]
 
+
 setup_pmode:
     mov eax, cr0
     or eax, 1
     mov cr0, eax
 
-    call detect_cursor_pos
     ; preserve the offset before long mode
-    mov word[video_mem_offset], cx
+    call detect_cursor_pos
     jmp code32:reload_CS
 
-
-; early mode GDT lives here
-; http://web.archive.org/web/20190424213806/http://www.osdever.net/tutorials/view/the-world-of-protected-mode
-gdt:
-.null:
-    dq  0
-.code:
-    dw 0x0FFFF
-    dw 0
-    db 0; continue of the base address
-    db 10011010b ; ring0-only readable code segment, nonconforming
-    db 11001111b ; 32-bit code, 4kb segment
-    db 0
-.data:
-    dw 0x0FFFF
-    dw 0
-    db 0; continue of the base address
-    db 10010010b ; ring0-only writeable data segment, expand down
-    db 11001111b ; same as for code segment
-    db 0
-.end:
-.desc:
-   dw .end - gdt -1 ; number of records
-   dd gdt          ;  start of the table
-
-code32 equ gdt.code - gdt
-data32 equ gdt.data - gdt
-; please note that we CANNOT call anything
-; ABOVE the code32. it probably a good idea to relocate
-; the GDT all the way down closer to a handover table.
 
 [bits 32]
 reload_CS:
@@ -505,29 +447,48 @@ reload_CS:
     mov ebp, 0x9c000
     mov esp, ebp
 
-    xor ecx, ecx
-    mov cx, word[video_mem_offset]
-    add ecx, 0xB8000
-
-    mov esi, .str32_hello
-.hello32:
-    mov al, byte[esi]
-    or al, al
-    jz .done
-
-    mov byte[ecx], al
-    inc ecx
-    mov byte[ecx], 0x02
-    inc ecx
-
-    inc esi ; i++
-    jmp .hello32
-
-.done:
+    ;
+    ;;
+    ;;; 32-bit mode starts here
+    ;;
+    ;
+    mov esi, early32data.hello
+    mov ah, 0x02
+    call print32
     hlt
 
+; assume char is in AL and color is in AH
+putc:
+    push ecx
 
-.str32_hello db 'pmode: hey, in 32-bit mode now', 0
+    mov ecx, dword[video_mem_offset]
+    mov [ecx], al    ; char
+    mov [ecx+1], ah  ; attributes
+
+    ; advance pointer and write it back
+    add ecx, 2
+    mov dword[video_mem_offset], ecx
+
+    pop ecx
+    ret
+
+; assume ESI points to a string
+print32:
+    push ax
+
+    mov al, byte[esi]
+    or al, al ; null-terminated string
+    jz .exit
+
+    call putc
+
+    inc esi ; i++
+    jmp print32
+
+.exit:
+    pop ax
+    ret
+
 
 
 times 510 - ($ - boot1) db 0 ;; padding
