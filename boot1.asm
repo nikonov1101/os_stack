@@ -1,4 +1,4 @@
-%define KERNEL_BLOCK_SZ 1
+%define BOOTLOADER_BLOCK_SZ 1
 
 ;tell the assembler that its a 16 bit code
 [BITS 16]
@@ -19,12 +19,10 @@ cpuid3_p equ 0x60c ; word, ECX after cpuid call
 cpuid_feat1_p equ 0x60e ; word, EDX after cpuid call with EAX=1 arg
 cpuid_feat2_p equ 0x610 ; word, ECX after cpuid call with EAX=1 arg
 
-;;;  FIXME: we've lost a byte at 0x612 here !!!
-video_screen_width_p equ 0x613 ; BYTE, max COLUMNS of a screen
-video_cursor_column_p equ 0x614 ; BYTE, x position on a screen
-video_cursor_row_p equ 0x615 ; BYTE, y position on a screen
-video_mem_offset equ 0x616   ; WORD, cursor offset in a video mem
-
+video_screen_width_p equ 0x612 ; BYTE, max COLUMNS of a screen
+video_cursor_column_p equ 0x613 ; BYTE, x position on a screen
+video_cursor_row_p equ 0x614 ; BYTE, y position on a screen
+video_mem_offset equ 0x615   ; WORD, cursor offset in a video mem
 
 ;;; TODO: place tmpGDT BEFORE e820 maps, because GDT is of known and fixed size
 ;;; TODO: is there a limit of entities in e820 table?
@@ -90,16 +88,25 @@ load_boot1:
 
     mov	si, 3			; for i < 3, do:
 .read:
+    ;;; TODO: rethink the kernel loading.
+    ;         we probably don;t have to load it that way so early.
+    ;         probably it would be better to just just pass the size
+    ;         to the handover table, and load it from a disk in protected or even long mode.
+    ;
+    ; here we only need a bootloader code, which is just 2 sectors long
+    ; (but i can expect the further growth a bit firther).
+    ;
+    ;
     ; read next blocks from a boot disk into the memory
-    mov ah, 0x02    ; read command
-    mov al, 1+KERNEL_BLOCK_SZ    ; read 1 sector with boot1, and rest of the kernel blocks
-    mov cx, 0x02 ; read SECOND block from disk, the first one is THIS one
+    mov ah, 0x02                   ; read command
+    mov al, BOOTLOADER_BLOCK_SZ    ; number of sectors to read
+    mov cx, 0x02                   ; read SECOND block from disk, the first one is THIS one (with mbr).
     ; dx already contains the drive number we've boot from
 
     ; ES:BX = pointer to buffer
     mov bx, boot1 ; boot0+512 must be equal to boot1 addr
     int 0x13;
-	jnc	.verify			;Success
+	jnc	.verify
 
     dec si
 	jnz	.read
@@ -115,24 +122,6 @@ load_boot1:
     cmp word[boot1_signature], 0xDEAD
     jne .verify_err
 
-load_himem:
-;;;  XXX: it will be a problem when kernel exceeds 128k
-    mov si, start32  ; src pointer
-
-    ; es:di is a dest pointer to the 1mb linear address
-    mov di, 0x100
-    mov ax, 0xfff0
-    mov es, ax
-
-.loop:
-    mov ax, [si]
-    mov [es:di], ax
-
-    inc di
-    inc si
-    cmp si, start32 + KERNEL_BLOCK_SZ * 512
-    jl .loop
-
 .boot1_ready:
     mov si, boot0data.str_found
     mov BL, 0x07
@@ -142,34 +131,23 @@ load_himem:
 ; Assume that ASCII value is in register AL
 ; assume text color options is register BL
 print_chr:
-    mov AH, 0x0E ; bios procedure number
-    mov BH, 0x00 ; page number
-    ; bit  7 - blink
-    ;Bits 6–4 = Background color in RGB order (3 bits).
-        ; Bit 6 = Red (background)
-        ; Bit 5 = Green (background)
-        ; Bit 4 = Blue (background)
-    ; Bits 3–0 = Foreground color in RGB + “Intensity” order (4 bits).
-        ; Bit 3 = Intensity (sometimes called “bright” bit)
-        ; Bit 2 = Red (foreground)
-        ; Bit 1 = Green (foreground)
-        ; Bit 0 = Blue (foreground)
+    mov ah, 0x0E ; bios procedure number
+    mov bh, 0x00 ; page number
     mov bl, 0x07 ; no fancy colors yet, ignore caller colors as well
     int 0x10  ; call bios procedure
     ret
 
 ; assume string pointer in SI
 print_string:
-    mov AL, [SI] ; chr = str[si]
-    or AL, AL ; null-termintor? chr == 0 ?
-    jz return
+    mov al, [si] ; chr = str[si]
+    or al, al ; is null-termintor?
+    jz .return
 
     call print_chr
 
-    inc SI  ; i++
+    inc si  ; i++
     jmp print_string
-
-return:
+.return:
     ret
 
 ; assume input byte in AL
@@ -214,7 +192,7 @@ print_word:
    call byte_to_char
    ret
 
-; assume error in AX:
+; assume error code in AX:
 ;    AH - sub-system ID, references a part of a boot process
 ;    AL - the error code itself
 print_err:
@@ -228,33 +206,24 @@ print_err:
     jmp $ ; hang forever
 
 
+;; video memory offset
+;; return (width * 2) * rows + rows in CX
+; trashes AX, CX
 detect_cursor_pos:
+    xor cx, cx
     xor ax, ax
-    ;;; TODO: move the whole word at once?
-    mov al, byte[0x450]
-    mov byte[video_cursor_column_p], al
 
-    mov al, byte[0x451]
-    mov byte[video_cursor_row_p], al
+    mov cx, word[0x44A] ; width
+    ;;; TODO: does Left Shift by 1 is cheaper?
+    imul cx, 2          ; chars are 2-byte wide: ascii, color
 
-    mov al, byte[0x44A]
-    imul ax, 2 ; each char takes 2 bytes in memory:
-    ; the character value itself, and its color
-    mov byte[video_screen_width_p], al
+    mov al, byte[0x451]  ; rows
+    imul cx, ax
 
-    ;;;  XXX: dirty experiments, cleanup needed.
-    xor  ecx, ecx
-    mov cl, byte[video_cursor_row_p]
-    imul cx, word[video_screen_width_p]
-
-    xor ax, ax
-    mov al, byte[video_cursor_column_p]
+    mov al, byte[0x450]; cols
     add cx, ax
 
-    mov word[video_mem_offset], cx
-    ; ^ now CX contains a valid memory *OFFSET* in video buffer
     ret
-
 
 
 ; boot0 data,
@@ -489,14 +458,8 @@ setup_pmode:
     mov cr0, eax
 
     call detect_cursor_pos
-
-.dig_here:
-    ;;;  XXX: looks like we've lost a return address on a stack after the int10
-    ;;;  XXX: so it'd better to add pusha/popa here and here.
-    ;mov ax, word[video_mem_offset]
-   ; call print_word
-   ; call crlf
-
+    ; preserve the offset before long mode
+    mov word[video_mem_offset], cx
     jmp code32:reload_CS
 
 
@@ -526,6 +489,9 @@ gdt:
 
 code32 equ gdt.code - gdt
 data32 equ gdt.data - gdt
+; please note that we CANNOT call anything
+; ABOVE the code32. it probably a good idea to relocate
+; the GDT all the way down closer to a handover table.
 
 [bits 32]
 reload_CS:
@@ -540,7 +506,7 @@ reload_CS:
     mov esp, ebp
 
     xor ecx, ecx
-    mov ecx, [video_mem_offset]
+    mov cx, word[video_mem_offset]
     add ecx, 0xB8000
 
     mov esi, .str32_hello
@@ -566,21 +532,5 @@ reload_CS:
 
 times 510 - ($ - boot1) db 0 ;; padding
 boot1_signature dw 0xDEAD
-
-;
-; ----------------------------------------------------
-; stub32 starts here
-; ----------------------------------------------------
-;
-
-start32:
-; mov eax, 0xB8000
-; mov byte[eax], '@'
-; inc eax
-; mov byte[eax], 0x1b
-;jmp $
-
-times 510 - ($ - start32) db 0 ;; padding
-start32_signature dw 0xCafe
 
 ; vim: filetype=nasm
