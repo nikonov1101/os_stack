@@ -27,6 +27,16 @@ video_mem_offset equ 0x612   ; DOUBLE WORD, cursor offset in a video mem
 ;;; TODO: is there a limit of entities in e820 table?
 e820_table_p equ 0xC00 ; himem maps
 
+; early page table, we map first 4mb just to learn paging in practice.
+page_dir_start equ 0x1000
+page_table0_start equ 0x2000
+; XXX: do not write above 0x3000,
+; achtually! we could allocate some more tables at
+; 0x4000, 0x5000, and 0x6000
+; but we can't have a full 1024-entities table
+; at 0x7000 because 0x7c00 is our entrypoint,
+; and we DO NOT RELOCETE out code.
+
 ;;; error code
 err_boot0_load_failed equ 0x0101
 err_boot0_bad_checksum equ 0x0102
@@ -452,9 +462,60 @@ reload_CS:
     ;;; 32-bit mode starts here
     ;;
     ;
+
+
+load_page_dir:
+    mov edi, 1024       ; 1024 entities in directory
+    mov ecx, page_dir_start
+
+.loop:
+    mov dword[ecx], 0x00000002 ; flags: kernel-mode, rw, not presented (yet)
+    add ecx, 4     ; entity size is 4-byte long.
+
+    dec edi
+    jnz .loop
+
+load_page_table0:
+    mov edi, 1024  ; number of entities
+    mov ecx, page_table0_start
+    xor ebx, ebx
+
+.loop:
+    ;mov ebx, edi
+    imul ebx, edi, 0x1000 ; 4k * page number
+    or ebx, 3        ; superuser, rw, present
+
+    mov dword[ecx], ebx
+    add ecx, 4
+
+    dec edi
+    jnz .loop
+
+    ;;; TODO:
+    ;;; TODO: properly map vga memory
+    ;;; TODO:
+
+enable_paging:
+    ; enable the first page directory
+    mov eax, [page_table0_start]
+    or eax, 3 ; flags: supervisor, RW, present
+    mov [page_dir_start], eax
+
+    ; tell the CPU where to find the table
+     mov eax, page_dir_start
+     mov cr3, eax
+    .dig_here:
+
+     mov eax, cr0
+     or eax, 0x80000001
+     mov cr0, eax
+
+
+; ----- testing code -----
     mov esi, early32data.hello
     mov ah, 0x02
     call print32
+
     hlt
 
 ; assume char is in AL and color is in AH
