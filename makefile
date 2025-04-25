@@ -8,6 +8,9 @@ os: bootloader k_early
 	cat bootloader.bin early.bin > boot.img
 	@ls -l boot.img
 
+s:
+	cc -std=c11 -pedantic -g3 -Wall -Wextra -Wconversion -Wdouble-promotion -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion -fsanitize=undefined -o scratch ./scratch.c && ./scratch
+
 EARLY_TEXT_AT ?= 0x8000
 KERNEL_ENTRYPOINT := 0x$(shell objdump --adjust-vma=$(EARLY_TEXT_AT) --section=.text -t early.o | grep k_early | cut -d' ' -f1)
 

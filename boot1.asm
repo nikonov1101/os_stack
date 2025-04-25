@@ -8,7 +8,7 @@
 [BITS 16]
 [ORG 0x7C00]
 
-kernel_blocks     equ 1
+kernel_blocks     equ 3
 ; handover table starts at 0x600
 ;;; TODO: probably we should stop naming each individual byte,
 ;;;      and declare some struct instead.
