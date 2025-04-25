@@ -1,14 +1,15 @@
 memory map so far:
 
-0x100000: kernel32
+0x100000: kernel32 (not yet)
 0x0a0000: lomem end @ 640k
 0x09fc00: extended bios data area @ 1k
-          <- start of the stack
+0x09c000: early stack
 .........
 0x008000: early32
 0x007e00: boot1
 0x007c00: boot0 @ 31k
-0x006x00: early32 scratch ram @ 27k
+0x007000: early32 scratch ram end
+0x006000: early32 scratch ram start
 .........
 0x000c00: e820 maps @ up to boot0
 0x000600: handover tables @ 1.5k
