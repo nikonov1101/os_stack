@@ -1,7 +1,7 @@
 MBR_END = 509 # whole mbr without magic bytes
 BOOT1_end = 512 + 509 # mbr + one more sector w/o magic.
 
-with open("boot.img", "rb") as f:
+with open("bootloader.bin", "rb") as f:
     bs = f.read()
     i = MBR_END
     while i> 0:

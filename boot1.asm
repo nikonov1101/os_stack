@@ -1,12 +1,14 @@
-%define BOOTLOADER_BLOCK_SZ 1
+%define VIDEO_BASE 0xB8000
+%define KERNEL_START_ADDR    %!KERNEL_START_ADDR
 
-;tell the assembler that its a 16 bit code
+;;; TODO(nikonov): okei, we fked up %define vs equ, please rewrite
+;;; must be defined during the assemled invocation,
+;;; look for "nasm -D ..." in the makefile.
+
 [BITS 16]
-
-;Origin, tell the assembler that where the code will
-;be in memory after it is been loaded
 [ORG 0x7C00]
 
+kernel_blocks     equ 1
 ; handover table starts at 0x600
 ;;; TODO: probably we should stop naming each individual byte,
 ;;;      and declare some struct instead.
@@ -29,13 +31,6 @@ e820_table_p equ 0xC00 ; himem maps
 
 ; early page table, we map first 4mb just to learn paging in practice.
 page_dir_start equ 0x1000
-page_table0_start equ 0x2000
-; XXX: do not write above 0x3000,
-; achtually! we could allocate some more tables at
-; 0x4000, 0x5000, and 0x6000
-; but we can't have a full 1024-entities table
-; at 0x7000 because 0x7c00 is our entrypoint,
-; and we DO NOT RELOCETE out code.
 
 ;;; error code
 err_boot0_load_failed equ 0x0101
@@ -45,6 +40,7 @@ err_boot0_boo1more_failed equ 0x0103
 err_boot1_lowmem_err equ 0x0201
 err_boot1_int15_failed equ 0x0202
 err_boot1_e820_failed equ 0x0203
+;
 
 _start_boot0:
     cli ; clear interrupts
@@ -59,8 +55,9 @@ boot0:
 	mov	SS, AX
 	mov	SP, _start_boot0  ;Top of stack
 
-    ; save the boot disk pointer in DL
-    push dx
+    ; save the boot disk pointer in hand-over table
+    mov word [boot_device_p], dx
+    push dx ; will be trashed by int 10h right below.
 
     ; set video mode, assuming AH = 0
     mov AL, 0x03 ;  (80x25, color)
@@ -74,20 +71,8 @@ boot0:
 
 .main:
     mov si, boot0data.str_hello ; SI points to the beginning of the string
-    mov bl, 0x03      ; text color
     call print_string
-
-    ;
-    ; print boot device number
-    ;
-    mov si, boot0data.str_bootdrive
-    call print_string
-
-    pop dx ; DO NOT MODIFY DX UNTIL BOOT1
-    mov word [boot_device_p], dx
-    mov al, dl
-    call byte_to_char
-    call crlf
+    pop dx
 
 load_boot1:
 .reset_drive:
@@ -108,7 +93,7 @@ load_boot1:
     ;
     ; read next blocks from a boot disk into the memory
     mov ah, 0x02                   ; read command
-    mov al, BOOTLOADER_BLOCK_SZ    ; number of sectors to read
+    mov al, 1 + kernel_blocks      ; number of sectors to read, +1 for boot1 sector
     mov cx, 0x02                   ; read SECOND block from disk, the first one is THIS one (with mbr).
     ; dx already contains the drive number we've boot from
 
@@ -130,11 +115,7 @@ load_boot1:
 .verify:
     cmp word[boot1_signature], 0xDEAD
     jne .verify_err
-
 .boot1_ready:
-    mov si, boot0data.str_found
-    mov BL, 0x07
-    call print_string
     jmp boot1
 
 ; Assume that ASCII value is in register AL
@@ -171,7 +152,6 @@ byte_to_char:
     mov al, byte[bx]   ; reference a byte pointed by BX, load into AL
     call print_chr ; print a byte from AL
 
-
     ; deal with the second char
     pop ax
     mov bx, ax  ; restore AX, copy into BX for modifications
@@ -179,13 +159,6 @@ byte_to_char:
     ; the rest is the same as above
     add bx, boot0data.tab_hextoc
     mov al, byte[bx]
-    call print_chr
-    ret
-
-crlf:
-    mov al, 10
-    call print_chr
-    mov al, 13
     call print_chr
     ret
 
@@ -231,7 +204,7 @@ detect_cursor_pos:
     mov al, byte[0x450]; cols
     add cx, ax
 
-    add ecx, 0xB8000
+    add ecx, VIDEO_BASE
     mov dword[video_mem_offset], ecx
 
     ret
@@ -245,17 +218,11 @@ boot0data:
     .str_hello db 'boot0 started', 10, 13 , 0
     .str_bootdrive db 'boot drive: ', 0
     .str_err db 'ERR: ', 0
-    .str_found db 'goto boot1', 10, 13, 0
     .tab_hextoc db '0123456789ABCDEF'
 
 ; boot1 data
 boot1data:
     .str_hello db 'boot1 started', 10, 13, 0
-    .str_lowmem db 'low mem: ', 0
-    .str_e820_regions db 'e820 reg: ', 0
-
-early32data:
-    .hello db 'pmode: hey, in 32-bit mode now', 0
 
 ; early mode GDT lives here
 ; http://web.archive.org/web/20190424213806/http://www.osdever.net/tutorials/view/the-world-of-protected-mode
@@ -288,11 +255,10 @@ data32 equ gdt.data - gdt
 ; ABOVE the code32. it probably a good idea to relocate
 ; the GDT all the way down closer to a handover table.
 
-
 times 510 - ($ - $$) db 0	;fill the rest of sector with 0
 boot0_signature dw 0xAA55			; add boot signature at the end of bootloader
-
 ; --- MBR end ---
+
 
 ; boot1 starts here: the idea is to put boot1 code right after the MBR,
 ; load it via bios procedure, and pass control to a newly loaded block.
@@ -301,29 +267,21 @@ boot1:
     mov SI, boot1data.str_hello
     call print_string
 
-    ; print in advance, src=AX  will be trashed
-    mov SI, boot1data.str_lowmem
-    call print_string
-
 .lowmem_detect:
     ; detect low memory
     clc
     int 0x12 ; request low memory size
     ; AX = amount of continuous memory in KB starting from 0.
     ; The carry flag is set if it failed
-    jnc .lowmem_print
+    jnc .lowmem_done
 
 .lowmem_err:
     mov ax, err_boot1_lowmem_err
     jmp print_err
 
-.lowmem_print:
+.lowmem_done:
     ; save AL in the handover area
     mov [lowmem_p], ax
-    call print_word
-    mov al, 'k'
-    call print_chr
-    call crlf
 
 set_a20:
     ; enable A20 line
@@ -379,18 +337,10 @@ detech_himem:
 .write_rec_count:
 	mov [es:e820_table_p], bp	; store the entry count
 	clc			; there is "jc" on end of list to this point, so the carry must be cleared
-	jmp .print_himem
+	jmp do_int15h
 .failed:
     mov ax, err_boot1_lowmem_err
     jmp print_err ; dead end
-
-.print_himem:
-    mov si, boot1data.str_e820_regions
-    call print_string
-
-    mov ax, bp
-    call print_word
-    call crlf
 
 ; get system configuration parameters
 ; https://stanislavs.org/helppc/int_15-c0.html
@@ -434,7 +384,6 @@ setup_gdt:
     mov ds, ax
     lgdt [gdt.desc]
 
-
 setup_pmode:
     mov eax, cr0
     or eax, 1
@@ -443,7 +392,6 @@ setup_pmode:
     ; preserve the offset before long mode
     call detect_cursor_pos
     jmp code32:reload_CS
-
 
 [bits 32]
 reload_CS:
@@ -457,102 +405,14 @@ reload_CS:
     mov ebp, 0x9c000
     mov esp, ebp
 
-    ;
-    ;;
-    ;;; 32-bit mode starts here
-    ;;
-    ;
-
-
-load_page_dir:
-    mov edi, 1024       ; 1024 entities in directory
-    mov ecx, page_dir_start
-
-.loop:
-    mov dword[ecx], 0x00000002 ; flags: kernel-mode, rw, not presented (yet)
-    add ecx, 4     ; entity size is 4-byte long.
-
-    dec edi
-    jnz .loop
-
-load_page_table0:
-    mov edi, 1024  ; number of entities
-    mov ecx, page_table0_start
-    xor ebx, ebx
-
-.loop:
-    ;mov ebx, edi
-    imul ebx, edi, 0x1000 ; 4k * page number
-    or ebx, 3        ; superuser, rw, present
-
-    mov dword[ecx], ebx
-    add ecx, 4
-
-    dec edi
-    jnz .loop
-
-    ;;; TODO:
-    ;;; TODO: properly map vga memory
-    ;;; TODO:
-
-enable_paging:
-    ; enable the first page directory
-    mov eax, [page_table0_start]
-    or eax, 3 ; flags: supervisor, RW, present
-    mov [page_dir_start], eax
-
-    ; tell the CPU where to find the table
-     mov eax, page_dir_start
-     mov cr3, eax
-    .dig_here:
-
-     mov eax, cr0
-     or eax, 0x80000001
-     mov cr0, eax
-
-
-; ----- testing code -----
-    mov esi, early32data.hello
-    mov ah, 0x02
-    call print32
-
+    ;;; 32-bit mode starts here,
+    ;;; please note that the K_EARLY_START
+    ;;; is defined at the compile time, via
+    call code32:KERNEL_START_ADDR
     hlt
-
-; assume char is in AL and color is in AH
-putc:
-    push ecx
-
-    mov ecx, dword[video_mem_offset]
-    mov [ecx], al    ; char
-    mov [ecx+1], ah  ; attributes
-
-    ; advance pointer and write it back
-    add ecx, 2
-    mov dword[video_mem_offset], ecx
-
-    pop ecx
-    ret
-
-; assume ESI points to a string
-print32:
-    push ax
-
-    mov al, byte[esi]
-    or al, al ; null-terminated string
-    jz .exit
-
-    call putc
-
-    inc esi ; i++
-    jmp print32
-
-.exit:
-    pop ax
-    ret
-
-
 
 times 510 - ($ - boot1) db 0 ;; padding
 boot1_signature dw 0xDEAD
+;;; here we are at 0x8000 and k_early must be glued up here
 
 ; vim: filetype=nasm
