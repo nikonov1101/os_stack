@@ -1,6 +1,8 @@
-// video_mem_offset equ 0x612   ; DOUBLE WORD, cursor offset in a video mem
 #define NULL 0
-#define VIDEO_MEM_OFFSET 0x612  // physical address
+
+#define HANDOVER_BOOT_DEVICE 0x600 // WORD
+#define HANDOVER_LOWMEM_SZ_K 0x602 // WORD
+#define HANDOVER_VIDEO_MEM_OFFSET 0x604 // DOUBLE WORD,cursor offset in a video mem
 #define VIDEO_BASE 0xB8000
 
 #define RAM_EARLY_START 0x6000
@@ -68,7 +70,7 @@ void k_early(void) {
 }
 
 void globals() {
-  u32 base = *(u32*)(VIDEO_MEM_OFFSET);
+  u32 base = *(u32*)(HANDOVER_VIDEO_MEM_OFFSET);
   u32* p = (u32*)base;
 
   video = (char*)(p);

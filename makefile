@@ -15,12 +15,16 @@ EARLY_TEXT_AT ?= 0x8000
 KERNEL_ENTRYPOINT := 0x$(shell objdump --adjust-vma=$(EARLY_TEXT_AT) --section=.text -t early.o | grep k_early | cut -d' ' -f1)
 
 bootloader: k_early
-	KERNEL_START_ADDR=$(KERNEL_ENTRYPOINT) nasm -f bin -o bootloader.bin boot1.asm
-	@python3 ./free.py
+	KERNEL_START_ADDR=$(KERNEL_ENTRYPOINT) \
+	KERNEL_BLOCKS=3 \
+	nasm -f bin -o bootloader.bin boot1.asm
 
 symbols: bootloader
 	cat boot1.asm | grep -v '\[ORG' > tmp.asm
+	KERNEL_START_ADDR=$(KERNEL_ENTRYPOINT) \
+	KERNEL_BLOCKS=3 \
 	nasm -f elf -Fdwarf tmp.asm -o tmp.elf
+
 	objdump -t tmp.elf > symbols.table
 	rm -f tmp.asm tmp.elf
 	python3 table.py
