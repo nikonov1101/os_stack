@@ -1,0 +1,2 @@
+--std=c23
+--target=i386-pc-none
