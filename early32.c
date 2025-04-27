@@ -1,8 +1,10 @@
 #define NULL 0
 
-#define HANDOVER_BOOT_DEVICE 0x600 // WORD
-#define HANDOVER_LOWMEM_SZ_K 0x602 // WORD
-#define HANDOVER_VIDEO_MEM_OFFSET 0x604 // DOUBLE WORD,cursor offset in a video mem
+#define HANDOVER_START 0x600
+#define HANDOVER_BOOT_DEVICE 0x600  // WORD
+#define HANDOVER_LOWMEM_SZ_K 0x602  // WORD
+#define HANDOVER_VIDEO_MEM_OFFSET \
+  0x604  // DOUBLE WORD,cursor offset in a video mem
 #define VIDEO_BASE 0xB8000
 
 #define RAM_EARLY_START 0x6000
@@ -11,6 +13,12 @@
 typedef unsigned int u32;
 typedef unsigned short int u16;
 typedef signed int i32;
+
+struct handover_table {
+  u16 boot_device;
+  u16 lowmem_k;
+  u32 video_mem;
+};
 
 void globals();
 void putc(char c);
@@ -30,7 +38,7 @@ u32 early_mm_init() {
 }
 
 char* video = NULL;
-void* term_init();
+void* term_init(u32 vm_offset);
 
 void break_point(void* any) {}
 
@@ -47,34 +55,30 @@ void new_line() {
   // expecting to appear at the beginning of the new line at this moment
 }
 
-void k_early(void) {
-  globals();
-  u32 heap_early = early_mm_init();
-  term_init();
-  print(" => video_base: ");
-  htoa(VIDEO_BASE);
-  print("; *video: ");
-  htoa((u32)video);
+__attribute__((section(".early32")))
+void early32(void) {
+  struct handover_table* t = (struct handover_table*)HANDOVER_START;
+
+  term_init(t->video_mem);
+  new_line();
+  print("early32: started");
+  new_line();
+
+  print("HOT: video: ");
+  htoa(t->video_mem);
+  print("boot: ");
+  htoa(t->boot_device);
+  print("low mem: ");
+  htoa(t->lowmem_k);
 
   break_point((void*)4);
-  new_line();
-  print("finally, i've implemented the new_line function!");
-  new_line();
-  print("so i can tell you that we are in the 32-bit mode,");
-  new_line();
-  print("and we're talking from C!");
 
   for (;;) {
     break_point((void*)video);
   }
 }
 
-void globals() {
-  u32 base = *(u32*)(HANDOVER_VIDEO_MEM_OFFSET);
-  u32* p = (u32*)base;
-
-  video = (char*)(p);
-}
+void globals() {}
 
 void print(char* str) {
   char c;
@@ -142,7 +146,9 @@ void putc(char c) {
 }
 
 u32 term_columns = 0;
-void* term_init() {
+void* term_init(u32 vm_offset) {
+  video = (char*)vm_offset;
+
   u16 cols = *(u16*)(0x450);
   u16 rows = *(u16*)(0x451);
   u16 width = *(u16*)(0x44a);

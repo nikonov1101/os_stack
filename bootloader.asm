@@ -4,7 +4,6 @@
 %define BIOS_SCREEN_COLS 0x450
 
 %define KERNEL_EARLY_AT      0x8000 ; where to load early32 kernel
-%define KERNEL_START_ADDR    %!KERNEL_START_ADDR
 %define KERNEL_BLOCKS        %!KERNEL_BLOCKS
 
 ;;; error codes
@@ -258,7 +257,7 @@ reload_CS:
     mov esp, ebp
 
     ;;; 32-bit early mode starts here,
-    call code32:KERNEL_START_ADDR
+    call code32:KERNEL_EARLY_AT
     hlt
 
 times 510 - ($ - $$) db 0	;fill the rest of sector with 0

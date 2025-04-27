@@ -4,38 +4,33 @@ default: clean os
 gdb: clean os
 	qemu-system-i386 -s -S -m 256m -boot c -hda boot.img
 
-os: bootloader k_early
-	cat bootloader.bin early.bin > boot.img
+os: bootloader early32
+	cat bootloader.bin early32.bin > boot.img
 	@ls -l boot.img
 
 s:
 	cc -std=c11 -pedantic -g3 -Wall -Wextra -Wconversion -Wdouble-promotion -Wno-unused-parameter -Wno-unused-function -Wno-sign-conversion -fsanitize=undefined -o scratch ./scratch.c && ./scratch
 
+KERNEL_BLOCKS := $(shell wc -c early32.bin | awk '{print int(0.5+$$1/512)}')
 EARLY_TEXT_AT ?= 0x8000
-KERNEL_ENTRYPOINT := 0x$(shell objdump --adjust-vma=$(EARLY_TEXT_AT) --section=.text -t early.o | grep k_early | cut -d' ' -f1)
 
-bootloader: k_early
-	KERNEL_START_ADDR=$(KERNEL_ENTRYPOINT) \
-	KERNEL_BLOCKS=3 \
-	nasm -f bin -o bootloader.bin boot1.asm
+bootloader: early32
+	KERNEL_BLOCKS=$(KERNEL_BLOCKS) \
+	nasm -f bin -o bootloader.bin bootloader.asm
+	@python3 ./free.py
 
-symbols: bootloader
+bootloader/symbols: bootloader
 	cat boot1.asm | grep -v '\[ORG' > tmp.asm
-	KERNEL_START_ADDR=$(KERNEL_ENTRYPOINT) \
-	KERNEL_BLOCKS=3 \
-	nasm -f elf -Fdwarf tmp.asm -o tmp.elf
-
+	KERNEL_BLOCKS=$(KERNEL_BLOCKS) nasm -f elf -Fdwarf tmp.asm -o tmp.elf
 	objdump -t tmp.elf > symbols.table
 	rm -f tmp.asm tmp.elf
 	python3 table.py
 	@rm symbols.table
 
-k_early:
-	@i386-elf-gcc -g -ffreestanding -c early.c -o early.o
-	@nasm early.asm -f elf -o early_loader.o
-	@i386-elf-ld -o early.bin -Ttext $(EARLY_TEXT_AT) early.o early_loader.o --oformat binary
-	@i386-elf-ld -o early.elf -Ttext $(EARLY_TEXT_AT) early.o early_loader.o
-
+early32:
+	@i386-elf-gcc -g -ffreestanding -c early32.c -o early32.o
+	@i386-elf-ld -T linker.ld -o early32.bin early32.o --oformat binary
+	@i386-elf-ld -T linker.ld -o early32.elf early32.o
 
 clean:
 	@rm -f *.o *.bin *.img
