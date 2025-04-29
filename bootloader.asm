@@ -39,11 +39,14 @@ boot0:
     mov AL, 0x03 ;  (80x25, color)
     int 0x10
 
-    ; set the cursor position
-    mov AH, 0x02
-    mov BH, 0x00
-    mov DX, 0x00
-    int 0x10
+    ; hide cursor
+    mov dx, 0x3D4
+	mov al, 0xA	; low cursor shape register
+	out dx, al
+	inc dx
+	mov al, 0x20	; bits 6-7 unused, bit 5 disables the cursor, bits 0-4 control the cursor shape
+	out dx, al
+
 
 .main:
     mov si, boot0data.str_hello ; SI points to the beginning of the string
