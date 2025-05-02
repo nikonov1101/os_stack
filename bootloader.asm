@@ -14,6 +14,7 @@
 %define HANDOVER_BOOT_DEVICE 0x600 ; WORD
 %define HANDOVER_LOWMEM_SZ_K 0x602 ; WORD
 %define HANDOVER_VIDEO_MEM_OFFSET 0x604 ; DOUBLE WORD,cursor offset in a video mem
+%define HANDOVER_EQUIPMENT_FLAGS 0x608 ; WORD
 
 
 [BITS 16]
@@ -66,6 +67,11 @@ detect_lowmem:
 .lowmem_done:
     ; save AL in the handover area
     mov [HANDOVER_LOWMEM_SZ_K], ax
+
+equipment_flags:
+    xor ax, ax
+    int 0x11
+    mov [HANDOVER_EQUIPMENT_FLAGS], ax
 
 set_a20:
     ; enable A20 line
