@@ -18,6 +18,16 @@ void putc(char c) {
   }
 }
 
+void clear_screen(u32 base) {
+  video = (char*)base;
+  for (int i = 0; i < term_columns * term_rows * 2; i++) {
+    *video++ = 0;
+  }
+  video = (char*)base;
+  current_row = 0;
+  current_column = 0;
+}
+
 void put_eol() {
   video += 2 * (term_columns - current_column);
   current_row++;

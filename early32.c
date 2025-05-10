@@ -2,7 +2,7 @@
 #include "libk/types.h"
 #include "x86/cpuid.h"
 #include "x86/equipment.h"
-
+#include "x86/vga.h"
 #define HANDOVER_TABLE_START 0x600
 
 struct handover_table {
@@ -16,7 +16,7 @@ struct handover_table {
 };
 
 // to be able to "b break_point" in gdb
-void break_point(void* any){}
+void break_point(void* any) {}
 
 __attribute__((section(".early32"))) void early32(void) {
   struct handover_table* t = (struct handover_table*)HANDOVER_TABLE_START;
@@ -34,6 +34,8 @@ __attribute__((section(".early32"))) void early32(void) {
 
   cpuid_get_features(&t->cpu_features1, &t->cpu_features2);
   kprintf("cpu_features: %x %x\n", t->cpu_features1, t->cpu_features2);
+
+  clear_screen(VIDEO_MEM_START);
 
   break_point((void*)1);
   kprintf("halt.");

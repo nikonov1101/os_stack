@@ -8,4 +8,5 @@ void _kprintf(char *fmt, int argc, int argv[]);
             (int[]){__VA_ARGS__}))
 
 void term_init(u32 vm_offset);
+void clear_screen(u32 base);
 void putc(char c);
